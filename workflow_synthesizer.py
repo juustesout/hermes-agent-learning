@@ -349,6 +349,86 @@ class WorkflowSynthesizer:
         self._last_dag: Optional[WorkflowDAG] = None
 
     # ------------------------------------------------------------------
+    # Template suggestie — ontworpen voor LLM-gebruik (Hermes roept dit)
+    # ------------------------------------------------------------------
+
+    def suggest_template(self, task: str) -> Dict[str, Any]:
+        """Analyseer een taak en geef template-suggestie.
+
+        Dit is de intelligente variant van _resolve_template. Ontworpen
+        om door Hermes (LLM) gebruikt te worden: Hermes analyseert de
+        taak met eigen reasoning, roept deze methode met expliciete
+        parameters.
+
+        Returns dict met:
+            template: template naam of None
+            node_types: suggestie voor node types (kan afwijken van template)
+            context: suggestie voor context variabelen
+            reasoning: korte uitleg waarom deze suggestie
+        """
+        task_lower = task.lower()
+
+        # Bouw een structured analysis
+        analysis = {
+            "task": task[:200],
+            "has_research": any(w in task_lower for w in
+                ["onderzoek", "research", "zoek", "analyse", "verzamel", "informatie",
+                 "research", "search", "find", "gather", "analyze"]),
+            "has_create": any(w in task_lower for w in
+                ["schrijf", "maak", "genereer", "creëer", "blog", "artikel", "post",
+                 "write", "create", "generate", "make", "blog", "article"]),
+            "has_publish": any(w in task_lower for w in
+                ["publiceer", "deel", "upload", "stuur", "blog", "website",
+                 "publish", "share", "upload", "send", "post"]),
+            "has_extract": any(w in task_lower for w in
+                ["extraheer", "haal", "data", "scrape", "contact",
+                 "extract", "get", "scrape", "data"]),
+            "has_monitor": any(w in task_lower for w in
+                ["monitor", "bewaak", "volg", "check", "watch",
+                 "monitor", "watch", "track", "check"]),
+            "has_validate": any(w in task_lower for w in
+                ["valideer", "check", "controleer", "review", "keur",
+                 "validate", "check", "verify", "review"]),
+            "has_notify": any(w in task_lower for w in
+                ["notificeer", "waarschuw", "mail", "bericht", "stuur",
+                 "notify", "alert", "send", "message", "email"]),
+        }
+
+        # Bepaal template obv analysis
+        template = None
+        reasoning = []
+
+        if analysis["has_research"] and analysis["has_create"] and analysis["has_publish"] and analysis["has_validate"]:
+            template = "research_create_validate_publish"
+            reasoning.append("research + create + validate + publish")
+        elif analysis["has_research"] and analysis["has_publish"]:
+            template = "research_publish"
+            reasoning.append("research + publish")
+        elif analysis["has_extract"]:
+            template = "scrape_extract_store"
+            reasoning.append("scrape + extract + store")
+        elif analysis["has_monitor"]:
+            template = "monitor_validate_notify"
+            reasoning.append("monitor + notify")
+        else:
+            template = "research_publish"
+            reasoning.append("default: research + publish")
+
+        # Context suggesties
+        context = {}
+        if analysis["has_extract"]:
+            context["data_type"] = "structured"
+        if analysis["has_monitor"]:
+            context["frequency"] = "daily"
+
+        return {
+            "template": template,
+            "reasoning": "; ".join(reasoning),
+            "context_suggestions": context,
+            "analysis": analysis,
+        }
+
+    # ------------------------------------------------------------------
     # Main synthesis method
     # ------------------------------------------------------------------
 
@@ -413,6 +493,66 @@ class WorkflowSynthesizer:
         return dag
 
     # ------------------------------------------------------------------
+    # Run — synthesize + execute in one call
+    # ------------------------------------------------------------------
+
+    def run(
+        self,
+        task: str,
+        template: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        discount_factor: float = 0.8,
+        execute_fn: Optional[Callable] = None,
+    ) -> WorkflowRun:
+        """Synthetiseer en voer direct uit.
+
+        Dit is de high-level API voor Hermes: één call synthetiseert
+        de DAG, initialiseert policies, en voert uit.
+
+        Args:
+            task: Taakomschrijving.
+            template: Optionele template (anders auto-detect).
+            context: Uitvoeringscontext (topic, flags, etc.).
+            discount_factor: Gamma voor credit assignment.
+            execute_fn: Optionele execute callback (default: simulated).
+
+        Returns:
+            WorkflowRun met resultaten.
+        """
+        ctx = context or {}
+
+        # Stap 1: Synthetiseer DAG
+        dag = self.synthesize(
+            task=task,
+            template=template,
+            context=ctx,
+            discount_factor=discount_factor,
+        )
+
+        # Stap 2: Bouw callbacks
+        decision_fn = self.make_decision(dag)
+        exe_fn = execute_fn or self.make_execute(dag)
+        reward_fn = self.make_reward()
+        local_reward_fn = self.make_local_reward(dag)
+
+        # Stap 3: Voer uit
+        runner = WorkflowRunner(
+            dag,
+            store=self.store,
+            agent_id=self.agent_id,
+            decision_fn=decision_fn,
+            execute_fn=exe_fn,
+            reward_fn=reward_fn,
+            local_reward_fn=local_reward_fn,
+            discount_factor=discount_factor,
+        )
+        run = runner.execute(context=ctx)
+
+        logger.info("Run completed: global_reward=%.4f, %d nodes",
+                     run.global_reward or 0, len(run.node_results))
+        return run
+
+    # ------------------------------------------------------------------
     # Template resolution
     # ------------------------------------------------------------------
 
@@ -421,30 +561,30 @@ class WorkflowSynthesizer:
         task: str,
         template: Optional[str] = None,
     ) -> Tuple[str, List[str], List[Tuple[str, str]]]:
-        """Bepaal welke template bij de taak hoort."""
-        task_lower = task.lower()
+        """Bepaal welke template bij de taak hoort.
 
-        # Expliciete template override
+        Gebruikt suggest_template() voor analyse — ook de keyword-gebaseerde
+        variant, want Hermes gebruikt deze methode met expliciete template
+        parameter. De CLI fallback gebruikt suggest_template() voor betere
+        auto-detect.
+        """
+        # Expliciete template override (Hermes roept dit met template=...)
         if template and template in WORKFLOW_TEMPLATES:
             name, nodes, edges = WORKFLOW_TEMPLATES[template]
             return template, nodes, edges
 
-        # Auto-detect obv keywords
-        if any(w in task_lower for w in ["publiceer", "blog", "post", "artikel", "nieuwsbrief"]):
-            t = "research_create_validate_publish"
-        elif any(w in task_lower for w in ["scrape", "extraheer", "data", "contact", "informatie"]):
-            t = "scrape_extract_store"
-        elif any(w in task_lower for w in ["monitor", "bewaak", "volg", "watch"]):
-            t = "monitor_validate_notify"
-        elif any(w in task_lower for w in ["research", "onderzoek", "zoek", "analyse"]):
-            t = "research_publish"
-        else:
-            # Default: research → create → publish
-            t = "research_publish"
+        # Auto-detect via suggest_template
+        suggestion = self.suggest_template(task)
+        t = suggestion["template"]
+        logger.info("Template suggestie: %s (%s)", t, suggestion["reasoning"])
 
-        name, nodes, edges = WORKFLOW_TEMPLATES[t]
-        logger.info("Auto-detected template %s for task: %s", t, task[:80])
-        return t, nodes, edges
+        if t in WORKFLOW_TEMPLATES:
+            name, nodes, edges = WORKFLOW_TEMPLATES[t]
+            return t, nodes, edges
+
+        # Fallback
+        name, nodes, edges = WORKFLOW_TEMPLATES["research_publish"]
+        return "research_publish", nodes, edges
 
     # ------------------------------------------------------------------
     # Policy initialization
