@@ -55,7 +55,8 @@ def make_episode(policy: SoftmaxPolicy, correct_action_id: str, task_done: bool)
     action_ids = [a.id for a in snapshot.actions]
     probs = policy.probabilities()
     # Sample from softmax (same as policy would)
-    r = random.random()
+    # Simulation randomness for learning behavior tests; crypto randomness is not required.
+    r = random.random()  # nosec B311
     cum = 0.0
     chosen_id = action_ids[-1]
     for idx, p in enumerate(probs):
@@ -70,7 +71,8 @@ def make_episode(policy: SoftmaxPolicy, correct_action_id: str, task_done: bool)
         reward_val = -0.8
 
     return Episode(
-        id=f"ep-{random.randint(10000, 99999)}",
+        # Non-security identifier values for test episodes.
+        id=f"ep-{random.randint(10000, 99999)}",  # nosec B311
         agent_id="hermes",
         task_id="scrape-test",
         action_id=chosen_id,
@@ -81,7 +83,7 @@ def make_episode(policy: SoftmaxPolicy, correct_action_id: str, task_done: bool)
             "task_completed": task_done,
         },
     ), Reward(
-        id=f"rw-{random.randint(10000, 99999)}",
+        id=f"rw-{random.randint(10000, 99999)}",  # nosec B311
         episode_id="",
         source=RewardSource.AGGREGATE,
         value=reward_val,

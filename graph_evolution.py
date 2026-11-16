@@ -243,8 +243,8 @@ class RunAnalyzer:
                     if r.episode_id in run_ep_ids and r.source.value == "aggregate":
                         if global_reward is None or r.value > global_reward:
                             global_reward = r.value
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to query rewards for run %s: %s", run_id, exc)
 
             if global_reward is not None:
                 per_run_rewards.append(global_reward)

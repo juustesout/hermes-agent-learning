@@ -102,7 +102,8 @@ class ThompsonPolicy(Policy):
         if not snapshot.actions:
             raise ValueError("ThompsonPolicy requires at least one action.")
         self._snapshot = snapshot
-        self._rng = rng or random.Random()
+        # Thompson sampling intentionally uses pseudo-random exploration, not crypto randomness.
+        self._rng = rng or random.Random()  # nosec B311
         self._prior_alpha = prior_alpha
         self._prior_beta = prior_beta
 
