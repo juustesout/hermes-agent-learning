@@ -291,9 +291,21 @@ def make_podcast_decision(store=None):
         if policy is not None:
             try:
                 decision = policy.choose()
-                return decision.action.id, decision.logprob, {
+                chosen = decision.action.id
+                # Apply constraints: filter out disallowed actions
+                from constraints import apply_podcast_constraints
+                allowed = apply_podcast_constraints(node.id, node.action_ids, context)
+                if chosen not in allowed and allowed:
+                    # Policy koos een geblokkeerde actie — gebruik eerste toegestane
+                    chosen = allowed[0]
+                    logprob = None
+                    source = f"{source}_constrained"
+                else:
+                    logprob = decision.logprob
+                return chosen, logprob, {
                     "source": source,
                     "policy_version": version,
+                    "allowed_actions": allowed,
                 }
             except Exception:
                 pass
