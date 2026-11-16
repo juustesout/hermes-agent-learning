@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(__file__))
+import env_setup  # noqa: F401 — ensures LocalFileStore backend
 
 from scrape_features import SITE_PROFILES, FEATURE_NAMES, phi_to_vector
 

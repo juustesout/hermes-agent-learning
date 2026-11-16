@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
 """
-test_adaptive_vs_standard.py — Vergelijk AdaptiveBanditLearner met standaard ReinforceLearner.
+test_adaptive_vs_standard.py — Multi-seed benchmark + ablation.
 
-Scenario:
-  1. Initialiseer een schone TaskPolicy (3 actions, uniform)
-  2. Voer 10 episodes in waar WebClaw werkt (correct, reward=0.7)
-  3. Train na elke episode en kijk hoe WebClaw dominant wordt
-  4. Voer dan 5 episodes in waar WebClaw faalt, Jina werkt
-  5. Kijk hoe snel de policy omslaat
+Scenario (30/30 as originally documented):
+  1. Clean SoftmaxPolicy (3 actions, uniform)
+  2. 30 episodes where WebClaw is correct (reward=0.7)
+  3. 30 episodes where WebClaw fails and Jina is correct
+  4. Repeat over seeds and report mean ± stddev
 
-Dit is een in-memory test — geen store of CLI nodig.
+Ablation isolates AdaptiveBanditLearner's three mechanisms:
+  - decay_only: logit decay, no LR boost
+  - failure_lr_only: failure detection + LR boost, no decay
+  - lr_boost_hair_trigger: decay off, threshold=1 so any miss boosts LR
 """
 
 from __future__ import annotations
 
-import copy
 import math
+import os
 import random
+import statistics
 import sys
 import tempfile
-from typing import Dict, List
 from pathlib import Path
+from typing import Any, Dict, List, Sequence, Tuple
 
-# Python path voor onze custom learner
-import os
 REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_ROOT))
 os.environ.setdefault("AGENT_LEARNING_STORE_BACKEND", "local")
@@ -31,13 +32,25 @@ os.environ.setdefault(
     "AGENT_LEARNING_LOCAL_STORE_DIR",
     str(Path(tempfile.gettempdir()) / "agent-learning-test-store"),
 )
+for _k in (
+    "AGENT_LEARNING_ADAPTIVE_LOGIT_DECAY",
+    "AGENT_LEARNING_ADAPTIVE_FAILURE_THRESHOLD",
+    "AGENT_LEARNING_ADAPTIVE_LR_BOOST",
+):
+    os.environ.pop(_k, None)
 
 from agent_learning.config import LearnerConfig
 from agent_learning.learners.reinforce import ReinforceLearner
 from agent_learning.policy.softmax_bandit import SoftmaxPolicy
-from agent_learning.types import Action, Episode, PolicySnapshot, Reward, RewardSource
+from agent_learning.types import Action, Episode, Reward, RewardSource
 
 from adaptive_learner import AdaptiveBanditLearner
+
+SEEDS: Sequence[int] = (42, 123, 256, 512, 1024)
+N_GOOD = 30
+N_BAD = 30
+
+LEARNER_CONFIG = LearnerConfig(learning_rate=0.05, baseline_decay=0.9, entropy_bonus=0.01)
 
 
 def make_policy() -> SoftmaxPolicy:
@@ -49,13 +62,10 @@ def make_policy() -> SoftmaxPolicy:
     return SoftmaxPolicy.from_actions(actions, agent_id="hermes", task_id="scrape-test")
 
 
-def make_episode(policy: SoftmaxPolicy, correct_action_id: str, task_done: bool) -> Episode:
-    """Simuleer een episode: policy beslist, wij bepalen of het correct was."""
+def make_episode(policy: SoftmaxPolicy, correct_action_id: str, task_done: bool) -> Tuple[Episode, Reward]:
     snapshot = policy.snapshot()
     action_ids = [a.id for a in snapshot.actions]
     probs = policy.probabilities()
-    # Sample from softmax (same as policy would)
-    # Simulation randomness for learning behavior tests; crypto randomness is not required.
     r = random.random()  # nosec B311
     cum = 0.0
     chosen_id = action_ids[-1]
@@ -70,8 +80,7 @@ def make_episode(policy: SoftmaxPolicy, correct_action_id: str, task_done: bool)
     if not task_done:
         reward_val = -0.8
 
-    return Episode(
-        # Non-security identifier values for test episodes.
+    ep = Episode(
         id=f"ep-{random.randint(10000, 99999)}",  # nosec B311
         agent_id="hermes",
         task_id="scrape-test",
@@ -82,147 +91,195 @@ def make_episode(policy: SoftmaxPolicy, correct_action_id: str, task_done: bool)
             "correct_action_id": correct_action_id,
             "task_completed": task_done,
         },
-    ), Reward(
+    )
+    rw = Reward(
         id=f"rw-{random.randint(10000, 99999)}",  # nosec B311
         episode_id="",
         source=RewardSource.AGGREGATE,
         value=reward_val,
     )
+    return ep, rw
+
+
+def make_learner(kind: str):
+    if kind == "reinforce":
+        return ReinforceLearner(config=LEARNER_CONFIG)
+    if kind == "adaptive_full":
+        return AdaptiveBanditLearner(
+            config=LEARNER_CONFIG, logit_decay=0.85, failure_threshold=2, lr_boost=5.0
+        )
+    if kind == "decay_only":
+        return AdaptiveBanditLearner(
+            config=LEARNER_CONFIG, logit_decay=0.85, failure_threshold=10_000, lr_boost=1.0
+        )
+    if kind == "failure_lr_only":
+        return AdaptiveBanditLearner(
+            config=LEARNER_CONFIG, logit_decay=1.0, failure_threshold=2, lr_boost=5.0
+        )
+    if kind == "lr_boost_hair_trigger":
+        return AdaptiveBanditLearner(
+            config=LEARNER_CONFIG, logit_decay=1.0, failure_threshold=1, lr_boost=5.0
+        )
+    raise ValueError(f"unknown learner kind: {kind}")
 
 
 def run_simulation(
-    name: str,
     learner,
     n_good: int,
     n_bad: int,
     *,
-    seed: int = 42,
-) -> List[Dict]:
-    """Run een simulatie en rapporteer probas na elke episode."""
+    seed: int,
+) -> List[Dict[str, Any]]:
     random.seed(seed)
     policy = make_policy()
-    history = []
+    history: List[Dict[str, Any]] = []
 
     for step in range(n_good):
-        if step < n_good:  # WebClaw werkt
-            ep, rw = make_episode(policy, "use_webclaw_scrape", True)
+        ep, rw = make_episode(policy, "use_webclaw_scrape", True)
         rw.episode_id = ep.id
         result = learner.update(policy, [ep], [rw])
         probs = policy.probabilities()
         action_ids = [a.id for a in policy.snapshot().actions]
+        extra = getattr(result, "extra", {}) or {}
         history.append({
             "step": step + 1,
-            "phase": "WebClaw werkt",
+            "phase": "good",
             "action": ep.action_id,
             "reward": rw.value,
-            "probs": {aid: round(p, 4) for aid, p in zip(action_ids, probs)},
-            "baseline": round(result.baseline_after, 4),
-            "extra": result.extra,
+            "probs": {aid: float(p) for aid, p in zip(action_ids, probs)},
+            "baseline": float(result.baseline_after),
+            "extra": extra,
         })
 
     for step in range(n_good, n_good + n_bad):
-        # WebClaw faalt nu, Jina werkt
         ep, rw = make_episode(policy, "use_jina_reader", True)
         rw.episode_id = ep.id
         result = learner.update(policy, [ep], [rw])
         probs = policy.probabilities()
         action_ids = [a.id for a in policy.snapshot().actions]
+        extra = getattr(result, "extra", {}) or {}
         history.append({
             "step": step + 1,
-            "phase": "WebClaw DOOD - Jina werkt",
+            "phase": "bad",
             "action": ep.action_id,
             "reward": rw.value,
-            "probs": {aid: round(p, 4) for aid, p in zip(action_ids, probs)},
-            "baseline": round(result.baseline_after, 4),
-            "extra": result.extra,
+            "probs": {aid: float(p) for aid, p in zip(action_ids, probs)},
+            "baseline": float(result.baseline_after),
+            "extra": extra,
         })
 
     return history
 
 
-# ============================================================================
-# RUN
-# ============================================================================
-
-N_GOOD = 10
-N_BAD = 5
-
-print(f"{'='*80}")
-print(f"VERGELIJKING: Standaard ReinforceLearner vs AdaptiveBanditLearner")
-print(f"{'='*80}")
-print(f"Scenario: {N_GOOD}x WebClaw werkt, daarna {N_BAD}x WebClaw faalt (Jina werkt)")
-print()
-
-# ---- Standaard learner ----------------------------------------------------
-std_config = LearnerConfig(learning_rate=0.05, baseline_decay=0.9, entropy_bonus=0.01)
-std_learner = ReinforceLearner(config=std_config)
-std_history = run_simulation(
-    "REINFORCE (standaard)", std_learner, N_GOOD, N_BAD, seed=42
-)
-
-# ---- Adaptive learner -----------------------------------------------------
-ada_config = LearnerConfig(learning_rate=0.05, baseline_decay=0.9, entropy_bonus=0.01)
-ada_learner = AdaptiveBanditLearner(
-    config=ada_config,
-    logit_decay=0.85,        # Sterk verval voor demo-doeleinden
-    failure_threshold=2,     # Na 2 failures boost
-    lr_boost=5.0,            # 5x learning rate bij regime change
-)
-# Dezelfde seed = dezelfde acties worden gekozen (eerlijke vergelijking)
-ada_history = run_simulation(
-    "AdaptiveBandit", ada_learner, N_GOOD, N_BAD, seed=42
-)
-
-# ---- Print resultaten -----------------------------------------------------
-def print_history(history, label):
-    print(f"\n{'─'*80}")
-    print(f"  {label}")
-    print(f"{'─'*80}")
-    print(f"{'Step':>5} {'Phase':<25} {'Action':<20} {'Reward':>7} {'WebClaw':>9} {'Jina':>9} {'Browser':>9} {'Baseline':>9}")
-    print(f"{'─'*80}")
-    for h in history:
+def summarise_history(history: List[Dict[str, Any]], n_good: int) -> Dict[str, Any]:
+    last = history[-1]["probs"]
+    after_good = history[n_good - 1]["probs"]
+    switched_at = None
+    for h in history[n_good:]:
         p = h["probs"]
-        extra = h.get("extra", {})
-        spike = ""
-        if extra.get("regime_change_detected"):
-            spike = " 🚨REGIME CHANGE"
-        print(
-            f"{h['step']:>5} {h['phase']:<25} {h['action']:<20} {h['reward']:>7.2f} "
-            f"{p.get('use_webclaw_scrape',0):>9.4f} {p.get('use_jina_reader',0):>9.4f} "
-            f"{p.get('use_browser',0):>9.4f} {h['baseline']:>9.4f}{spike}"
-        )
+        if p.get("use_jina_reader", 0) > p.get("use_webclaw_scrape", 0):
+            switched_at = h["step"] - n_good
+            break
+    return {
+        "webclaw_after_good": after_good.get("use_webclaw_scrape", 0.0),
+        "jina_after_good": after_good.get("use_jina_reader", 0.0),
+        "webclaw_final": last.get("use_webclaw_scrape", 0.0),
+        "jina_final": last.get("use_jina_reader", 0.0),
+        "browser_final": last.get("use_browser", 0.0),
+        "switched": last.get("use_jina_reader", 0.0) > last.get("use_webclaw_scrape", 0.0),
+        "steps_to_switch": switched_at,
+    }
 
-print_history(std_history, "STANDAARD REINFORCE")
-print_history(ada_history, "ADAPTIVE BANDIT (logit_decay=0.85, failure_threshold=2, lr_boost=5x)")
 
-# ---- Conclusie ------------------------------------------------------------
-std_last = std_history[-1]["probs"]
-ada_last = ada_history[-1]["probs"]
+def mean_std(values: List[float]) -> Tuple[float, float]:
+    if not values:
+        return float("nan"), float("nan")
+    if len(values) == 1:
+        return values[0], 0.0
+    return statistics.mean(values), statistics.stdev(values)
 
-print(f"\n{'='*80}")
-print(f"CONCLUSIE na {N_GOOD + N_BAD} episodes:")
-print(f"{'='*80}")
-print(f"  Standaard REINFORCE:  WebClaw={std_last.get('use_webclaw_scrape',0):.1%}, "
-      f"Jina={std_last.get('use_jina_reader',0):.1%}, "
-      f"Browser={std_last.get('use_browser',0):.1%}")
-print(f"  AdaptiveBandit:      WebClaw={ada_last.get('use_webclaw_scrape',0):.1%}, "
-      f"Jina={ada_last.get('use_jina_reader',0):.1%}, "
-      f"Browser={ada_last.get('use_browser',0):.1%}")
-print()
 
-# Check after first failure
-std_after_fail1 = std_history[N_GOOD]["probs"]
-ada_after_fail1 = ada_history[N_GOOD]["probs"]
-print(f"  Na 1e failure:")
-print(f"    Standaard:  WebClaw={std_after_fail1.get('use_webclaw_scrape',0):.1%}")
-print(f"    Adaptive:   WebClaw={ada_after_fail1.get('use_webclaw_scrape',0):.1%}")
+def run_benchmark(
+    seeds: Sequence[int] = SEEDS,
+    n_good: int = N_GOOD,
+    n_bad: int = N_BAD,
+    kinds: Sequence[str] = (
+        "reinforce",
+        "adaptive_full",
+        "decay_only",
+        "failure_lr_only",
+        "lr_boost_hair_trigger",
+    ),
+) -> Dict[str, Dict[str, Any]]:
+    report: Dict[str, Dict[str, Any]] = {}
+    for kind in kinds:
+        per_seed = []
+        for seed in seeds:
+            learner = make_learner(kind)
+            history = run_simulation(learner, n_good, n_bad, seed=seed)
+            per_seed.append(summarise_history(history, n_good))
+        jina = [s["jina_final"] for s in per_seed]
+        webclaw = [s["webclaw_final"] for s in per_seed]
+        after_good = [s["webclaw_after_good"] for s in per_seed]
+        switch_steps = [s["steps_to_switch"] for s in per_seed if s["steps_to_switch"] is not None]
+        jina_m, jina_s = mean_std(jina)
+        web_m, web_s = mean_std(webclaw)
+        good_m, good_s = mean_std(after_good)
+        sw_m, sw_s = mean_std(switch_steps) if switch_steps else (float("nan"), float("nan"))
+        report[kind] = {
+            "seeds": list(seeds),
+            "n_good": n_good,
+            "n_bad": n_bad,
+            "jina_final_mean": jina_m,
+            "jina_final_std": jina_s,
+            "webclaw_final_mean": web_m,
+            "webclaw_final_std": web_s,
+            "webclaw_after_good_mean": good_m,
+            "webclaw_after_good_std": good_s,
+            "switch_rate": sum(1 for s in per_seed if s["switched"]) / len(per_seed),
+            "steps_to_switch_mean": sw_m,
+            "steps_to_switch_std": sw_s,
+            "per_seed": per_seed,
+        }
+    return report
 
-# Check after all failures
-std_after_all = std_history[-1]
-ada_after_all = ada_history[-1]
-std_switched = std_last.get("use_jina_reader", 0) > std_last.get("use_webclaw_scrape", 0)
-ada_switched = ada_last.get("use_jina_reader", 0) > ada_last.get("use_webclaw_scrape", 0)
 
-print(f"\n  Is de policy omgeslagen naar Jina?")
-print(f"    Standaard:  {'JA ✅' if std_switched else 'NEE ❌ — blijft WebClaw dominant'}")
-print(f"    Adaptive:   {'JA ✅' if ada_switched else 'NEE ❌ — blijft WebClaw dominant'}")
+def format_report(report: Dict[str, Dict[str, Any]]) -> str:
+    labels = {
+        "reinforce": "REINFORCE (baseline)",
+        "adaptive_full": "Adaptive full (decay+fail+LR)",
+        "decay_only": "Ablation: decay only",
+        "failure_lr_only": "Ablation: failure detect + LR",
+        "lr_boost_hair_trigger": "Ablation: LR boost (threshold=1)",
+    }
+    lines = [
+        "=" * 88,
+        "AdaptiveBandit vs REINFORCE — multi-seed benchmark + ablation",
+        f"Episodes: {N_GOOD} good (WebClaw) + {N_BAD} bad (Jina)  seeds={list(SEEDS)}",
+        "=" * 88,
+        f"{'variant':<36} {'Jina final':>16} {'WebClaw final':>16} {'switch%':>8} {'steps':>10}",
+        "-" * 88,
+    ]
+    for kind, row in report.items():
+        jina = f"{row['jina_final_mean']:.3f}±{row['jina_final_std']:.3f}"
+        web = f"{row['webclaw_final_mean']:.3f}±{row['webclaw_final_std']:.3f}"
+        sw = f"{row['switch_rate']*100:.0f}%"
+        if math.isnan(row["steps_to_switch_mean"]):
+            steps = "never"
+        else:
+            steps = f"{row['steps_to_switch_mean']:.1f}±{row['steps_to_switch_std']:.1f}"
+        lines.append(f"{labels.get(kind, kind):<36} {jina:>16} {web:>16} {sw:>8} {steps:>10}")
+    lines.append("-" * 88)
+    lines.append("switch% = fraction of seeds where final P(Jina) > P(WebClaw)")
+    lines.append("steps   = mean episodes into the bad phase until Jina overtakes")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    report = run_benchmark()
+    print(format_report(report))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -61,6 +61,7 @@ echo "=== Fase 2: Podcast workflow run ==="
 python3 -c "
 import sys, os
 sys.path.insert(0, '.')
+import env_setup  # noqa: F401
 
 from podcast_workflow import build_podcast_dag, make_podcast_decision, podcast_execute
 from workflow_runner import WorkflowRunner
@@ -104,6 +105,7 @@ echo "=== Fase 3: Skill Discovery ==="
 python3 -c "
 import sys, os
 sys.path.insert(0, '.')
+import env_setup  # noqa: F401
 
 from skill_discovery import SkillDiscovery
 from agent_learning.storage.cosmos import get_default_store
@@ -130,6 +132,7 @@ mkdir -p "$DASHBOARD_DIR"
 python3 -c "
 import sys, os
 sys.path.insert(0, '.')
+import env_setup  # noqa: F401
 
 from graph_evolution import Dashboard
 from agent_learning.storage.cosmos import get_default_store

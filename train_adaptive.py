@@ -24,6 +24,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+import env_setup  # noqa: F401 — ensures LocalFileStore backend
 
 from collections import Counter
 

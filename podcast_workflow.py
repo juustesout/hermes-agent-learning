@@ -31,9 +31,13 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from thompson_policy import ThompsonPolicy
 
 sys.path.insert(0, os.path.dirname(__file__))
+import env_setup  # noqa: F401 — ensures LocalFileStore backend
 
 from workflow_dag import WorkflowDAG, WorkflowNode, WorkflowRun
 from workflow_runner import WorkflowRunner, DecisionFn, ExecuteFn, RewardFn
@@ -337,17 +341,30 @@ def podcast_execute(node: WorkflowNode, action_id: str, context: Dict[str, Any])
     }
     delay = sim_latency.get(node.id, 0.5)
 
+    def _finish(status: str, summary: str, extra: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
+        latency_s = round(time.time() - started, 2)
+        meta = dict(extra)
+        meta["latency_s"] = latency_s
+        from cost_aware_rewards import CostAwareReward
+        CostAwareReward.annotate_execution(context, node.id, action_id, latency_s)
+        context[f"_result:{node.id}"] = {
+            "action": action_id,
+            "summary": summary,
+            "latency_s": latency_s,
+        }
+        return status, summary, meta
+
     # Check voor forced failures (voor reward testing)
     fail_node = context.get("force_fail")
     if fail_node == node.id:
         time.sleep(delay * 0.3)
-        return "failed", f"Geforceerde fout in {node.id}", {"forced": True}
+        return _finish("failed", f"Geforceerde fout in {node.id}", {"forced": True})
 
     # Check voor partial failures
     fail_rate = context.get("fail_rate", 0.0)
     if fail_rate > 0 and hash(f"{context.get('run_seed','')}:{node.id}") % 100 < fail_rate * 100:
         time.sleep(delay * 0.5)
-        return "failed", f"Willekeurige fout in {node.id}", {"random_failure": True}
+        return _finish("failed", f"Willekeurige fout in {node.id}", {"random_failure": True})
 
     time.sleep(min(delay, 1.0))  # cap simulated delay for testing
 
@@ -362,13 +379,7 @@ def podcast_execute(node: WorkflowNode, action_id: str, context: Dict[str, Any])
     }
     summary = results.get(node.id, f"{node.id} voltooid via {action_id}")
 
-    context[f"_result:{node.id}"] = {
-        "action": action_id,
-        "summary": summary,
-        "latency_s": round(time.time() - started, 2),
-    }
-
-    return "completed", summary, {"simulated": True, "latency_s": round(time.time() - started, 2)}
+    return _finish("completed", summary, {"simulated": True})
 
 
 def podcast_reward(context: Dict[str, Any], node_results: List) -> Tuple[float, str]:

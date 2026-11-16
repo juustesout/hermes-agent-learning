@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(__file__))
+import env_setup  # noqa: F401 — ensures LocalFileStore backend
 
 from workflow_dag import WorkflowDAG, WorkflowNode, WorkflowRun
 from workflow_runner import WorkflowRunner, LocalRewardFn
