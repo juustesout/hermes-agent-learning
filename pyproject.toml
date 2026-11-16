@@ -13,6 +13,9 @@ dependencies = [
     "numpy>=1.24",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
 [project.urls]
 repository = "https://github.com/hermes-ai/hermes-agent-learning"
 

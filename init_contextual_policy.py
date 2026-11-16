@@ -17,6 +17,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+import env_setup  # noqa: F401 — ensures LocalFileStore backend
 
 from agent_learning.policy.contextual_softmax import ContextualSoftmaxPolicy
 from agent_learning.storage.cosmos import get_default_store

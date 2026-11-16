@@ -325,6 +325,7 @@ class WorkflowRunner:
                 node_result.error = str(exc)
                 status = "failed"
                 summary = node_result.result_summary
+                exec_meta = {}
 
             node_result.completed_at = datetime.now(timezone.utc).isoformat()
 
@@ -340,9 +341,14 @@ class WorkflowRunner:
                     actual_latency = exec_meta.get("latency_s", 5.0)
             else:
                 actual_latency = exec_meta.get("latency_s", 5.0)
-            run.context[f"_latency:{node.id}"] = actual_latency
-            run.context[f"_cost:{node.id}"] = exec_meta.get("cost",
-                None)  # None = fallback to estimate_cost in CostAwareReward
+            from cost_aware_rewards import CostAwareReward
+            CostAwareReward.annotate_execution(
+                run.context,
+                node.id,
+                action_id,
+                actual_latency,
+                cost=exec_meta.get("cost"),
+            )
 
             # ---- Step 2c: Local reward (per-node, independent of global) ----
             local_reward_val: Optional[float] = None

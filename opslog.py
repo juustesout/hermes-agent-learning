@@ -117,9 +117,10 @@ def stats() -> dict:
 
 
 # ---- CLI ----
-if __name__ == "__main__":
-    import sys
+
+def main(argv=None) -> int:
     import argparse
+    import sys
 
     parser = argparse.ArgumentParser(prog="opslog", description="Hermes operation logger")
     sub = parser.add_subparsers(dest="cmd")
@@ -144,7 +145,7 @@ if __name__ == "__main__":
 
     sub.add_parser("stats", help="Statistieken")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.cmd == "log":
         cf = None
@@ -153,7 +154,7 @@ if __name__ == "__main__":
                 cf = json.loads(args.context_features)
             except json.JSONDecodeError:
                 print(f"Invalid context-features JSON: {args.context_features}", file=sys.stderr)
-                sys.exit(1)
+                return 1
         oid = log_operation(
             task_id=args.task_id,
             action_id=args.action_id,
@@ -167,14 +168,23 @@ if __name__ == "__main__":
             context_features=cf,
         )
         print(f"ok {oid}")
+        return 0
     elif args.cmd == "count":
         print(count_operations())
+        return 0
     elif args.cmd == "tail":
         for op in tail(args.n):
             print(json.dumps(op, indent=2)[:500])
             print("---")
+        return 0
     elif args.cmd == "stats":
         s = stats()
         print(json.dumps(s, indent=2))
-    else:
-        parser.print_help()
+        return 0
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

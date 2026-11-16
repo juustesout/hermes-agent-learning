@@ -206,9 +206,10 @@ def _write_reward(ep: dict):
         execution_status="completed" if success else "failed",
         metadata={"cost": cost},
     )
-    # CostAwareReward.compute() leest latency uit context
-    ctx = {f"_latency:{node_result.node_id}": latency_ms / 1000.0,
-           f"_cost:{node_result.node_id}": cost}
+    ctx: dict = {}
+    CostAwareReward.annotate_execution(
+        ctx, node_result.node_id, action_id, latency_ms / 1000.0, cost=cost,
+    )
     reward_value, reason = reward_fn.compute(ctx, [node_result])
 
     import uuid

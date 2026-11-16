@@ -274,6 +274,8 @@ class ThompsonLearner:
     Supports the same adaptive features as AdaptiveBanditLearner:
     - Failure detection (consecutive failures → boost)
     - Dynamic learning rate (via observation weighting)
+    - Beta decay (old evidence fades so regime changes are not dominated
+      by accumulated Beta posteriors)
     """
 
     def __init__(
@@ -284,12 +286,16 @@ class ThompsonLearner:
         failure_threshold: int = 3,
         lr_boost: float = 3.0,
         min_observations: int = 1,
+        beta_decay: float = 1.0,
+        decay_unupdated_only: bool = False,
     ) -> None:
         self.prior_alpha = prior_alpha
         self.prior_beta = prior_beta
         self.failure_threshold = failure_threshold
         self.lr_boost = lr_boost
         self.min_observations = min_observations
+        self.beta_decay = float(beta_decay)
+        self.decay_unupdated_only = bool(decay_unupdated_only)
 
     def update(
         self,
@@ -347,6 +353,19 @@ class ThompsonLearner:
         failure_rate = failures / max(used, 1)
         boost = self.lr_boost if failure_rate > 0.5 else 1.0
 
+        # Fade old Beta evidence so accumulated posteriors don't dominate
+        # after a regime change. Decay runs BEFORE applying this batch so
+        # new observations are not immediately discounted.
+        if self.beta_decay < 1.0:
+            alphas = policy._snapshot.metadata.get("thompson_alpha", {})
+            betas = policy._snapshot.metadata.get("thompson_beta", {})
+            updated_ids = set(updates.keys())
+            for action_id in list(alphas.keys()):
+                if self.decay_unupdated_only and action_id in updated_ids:
+                    continue
+                alphas[action_id] = max(1e-6, alphas[action_id] * self.beta_decay)
+                betas[action_id] = max(1e-6, betas.get(action_id, self.prior_beta) * self.beta_decay)
+
         # Apply updates
         action_updates: Dict[str, Dict[str, float]] = {}
         for action_id, (alpha_delta, beta_delta) in updates.items():
@@ -375,6 +394,8 @@ class ThompsonLearner:
             "mean_reward": round(mean_reward, 4),
             "failure_rate": round(failure_rate, 4),
             "boost_applied": boost > 1.0,
+            "beta_decay": self.beta_decay,
+            "decay_unupdated_only": self.decay_unupdated_only,
             "action_updates": action_updates,
             "total_observations": used,
             "policy_version": policy._snapshot.version,
