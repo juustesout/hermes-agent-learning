@@ -53,19 +53,22 @@ python3 train_thompson.py \
 
 # ---- Fase 2: Run podcast workflow (simulated, logged to store) ----------
 echo ""
-echo "=== Fase 2: Podcast workflow run ==="
+echo "=== Fase 2: Podcast workflow run (cost-aware) ==="
 
 python3 -c "
 import sys, os
 sys.path.insert(0, '.')
 
-from podcast_workflow import build_podcast_dag, podcast_decision, podcast_execute, podcast_reward
+from podcast_workflow import build_podcast_dag, podcast_decision, podcast_execute
 from workflow_runner import WorkflowRunner
+from cost_aware_rewards import balanced_reward
 from agent_learning.storage.cosmos import get_default_store
 
 store = get_default_store()
+reward_fn = balanced_reward()
 
 print(f'Store: {type(store).__name__}')
+print(f'Reward: balanced (completion=1.0, latency=0.3, cost=0.3, quality=0.2)')
 n_eps_before = store.count_episodes('hermes', full_only=False)
 print(f'Episodes before: {n_eps_before}')
 
@@ -73,19 +76,42 @@ dag = build_podcast_dag(0.8)
 runner = WorkflowRunner(dag, store=store, agent_id='hermes',
                          decision_fn=podcast_decision,
                          execute_fn=podcast_execute,
-                         reward_fn=podcast_reward)
+                         reward_fn=reward_fn.compute)
 run = runner.execute(context={'topic': 'Dagelijkse Cron Run'})
 
 n_eps_after = store.count_episodes('hermes', full_only=False)
 new_eps = n_eps_after - n_eps_before
 print(f'Episodes after:  {n_eps_after} (+{new_eps})')
-print(f'Global reward:   {run.global_reward}')
+print(f'Global reward:   {run.global_reward}  ({run.global_reward_reason})')
 print(f'Node results:')
 for nr in run.node_results:
     print(f'  [{nr.distance_from_end}] {nr.node_name:<20} {nr.action_name:<20} {nr.execution_status:<10} credit={nr.credit_reward or 0:+.4f}')
 " 2>&1 || echo "[workflow] run error — continuing"
 
-# ---- Fase 3: Generate dashboard HTML -----------------------------------
+# ---- Fase 4: Skill Discovery --------------------------------------------
+echo ""
+echo "=== Fase 4: Skill Discovery ==="
+
+python3 -c "
+import sys, os
+sys.path.insert(0, '.')
+
+from skill_discovery import SkillDiscovery
+from agent_learning.storage.cosmos import get_default_store
+
+store = get_default_store()
+disc = SkillDiscovery(store)
+report = disc.report(dag_id='podcast', min_support=2)
+print(report)
+
+# Summary line
+skills = disc.discover(dag_id='podcast', min_support=2)
+print(f'\nDiscovered {len(skills)} skills (min_support=2)')
+for s in skills[:5]:
+    print(f'  [{s.confidence:.2f}] {s.name}  (freq={s.frequency})')
+" 2>&1 || echo "[skill-discovery] error — continuing"
+
+# ---- Fase 5: Generate dashboard HTML -----------------------------------
 echo ""
 echo "=== Fase 3: Dashboard ==="
 
