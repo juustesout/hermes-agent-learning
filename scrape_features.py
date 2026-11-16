@@ -10,7 +10,7 @@ Elke feature is genormaliseerd naar ruwweg [0, 1] voor stabiele learning.
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 # Feature index mapping — sorteert alfabetisch voor determinisme
 FEATURE_NAMES: List[str] = sorted([

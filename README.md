@@ -180,7 +180,7 @@ als basis en accepteren overrides via environment variables:
 Deze repo bevat CI in [.github/workflows/ci.yml](./.github/workflows/ci.yml).
 Bij pushes naar `main` en op pull requests draait de pipeline op Python 3.11 en 3.12:
 
-- `ruff check .` (linting)
+- `ruff check . --select E9,F63,F7,F82` (kritieke lint checks voor syntax/name errors)
 - `bandit -r .` (security static analysis, exclusief `store/` en `dashboard/`)
 - `python -m compileall -q .` (syntax check)
 
