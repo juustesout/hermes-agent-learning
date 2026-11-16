@@ -224,7 +224,7 @@ def make_podcast_decision(store=None):
             Falls back to first action when no policy exists.
     """
     # Cache for auto-created policies per task_id
-    _auto_policies: Dict[str, ThompsonPolicy] = {}
+    _auto_policies: Dict[str, "ThompsonPolicy"] = {}
 
     def _get_or_create_policy(node: WorkflowNode) -> tuple:
         """Get existing policy or create a fresh ThompsonPolicy."""
