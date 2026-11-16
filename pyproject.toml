@@ -1,0 +1,20 @@
+[project]
+name = "hermes-agent-learning"
+version = "0.2.0"
+description = "Self-learning agent: contextual bandits, workflow credit assignment, and graph evolution"
+authors = [
+    {name = "Hermes AI", email = "hermes@nousresearch.com"},
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "agent-learning>=0.10.0",
+    "numpy>=1.24",
+]
+
+[project.urls]
+repository = "https://github.com/hermes-ai/hermes-agent-learning"
+
+[tool.setuptools.packages.find]
+include = ["agent_learning*"]
