@@ -57,6 +57,15 @@ RewardFn = Callable[
     Tuple[float, str],
 ]
 
+# Local reward callback: (node, action_id, status, summary, exec_meta, run_context)
+# → (reward_float, reason_string)
+# Called immediately after each node executes, before the global reward.
+# Gives a per-node signal independent of the global outcome.
+LocalRewardFn = Callable[
+    [WorkflowNode, str, str, str, Dict[str, Any], Dict[str, Any]],
+    Tuple[float, str],
+]
+
 logger = logging.getLogger("workflow_runner")
 
 
@@ -108,6 +117,35 @@ def _default_reward(
     return ok / total, f"{ok}/{total} nodes completed"
 
 
+def _default_local_reward(
+    node: WorkflowNode,
+    action_id: str,
+    status: str,
+    summary: str,
+    exec_meta: Dict[str, Any],
+    context: Dict[str, Any],
+) -> Tuple[float, str]:
+    """Standaard lokale reward: 0.5 voor completed, -0.5 voor failed.
+
+    Bonusfactoren:
+    - Niet-lege result_summary: +0.3
+    - Geen error in exec_meta: +0.2
+    """
+    if status == "completed":
+        base = 0.5
+        reasons = ["completed"]
+        if summary and len(summary) > 10:
+            base += 0.3
+            reasons.append("content")
+        if not exec_meta.get("error"):
+            base += 0.2
+            reasons.append("clean")
+        reward = min(base, 1.0)
+        return reward, "+".join(reasons)
+    else:
+        return -0.5, "failed"
+
+
 # ---------------------------------------------------------------------------
 # WorkflowRunner
 # ---------------------------------------------------------------------------
@@ -138,6 +176,7 @@ class WorkflowRunner:
         decision_fn: Optional[DecisionFn] = None,
         execute_fn: Optional[ExecuteFn] = None,
         reward_fn: Optional[RewardFn] = None,
+        local_reward_fn: Optional[LocalRewardFn] = None,
         auto_reward: bool = True,
         discount_factor: Optional[float] = None,
     ) -> None:
@@ -155,6 +194,9 @@ class WorkflowRunner:
                 Default: _default_execute (calls node.execute if set).
             reward_fn: Callback that determines the global reward after
                 all nodes complete. Default: _default_reward.
+            local_reward_fn: Optional per-node reward callback, called
+                immediately after each node executes. Gives a local signal
+                independent of the global outcome. Default: None.
             auto_reward: If True, run credit assignment immediately after
                 the run finishes. Set False to assign rewards later.
             discount_factor: Override the DAG's discount factor for
@@ -166,6 +208,7 @@ class WorkflowRunner:
         self.decision_fn = decision_fn or _default_decision
         self.execute_fn = execute_fn or _default_execute
         self.reward_fn = reward_fn or _default_reward
+        self.local_reward_fn = local_reward_fn
         self.auto_reward = auto_reward
         self._discount = (
             discount_factor if discount_factor is not None
@@ -264,11 +307,29 @@ class WorkflowRunner:
             run.context[f"_cost:{node.id}"] = exec_meta.get("cost",
                 None)  # None = fallback to estimate_cost in CostAwareReward
 
+            # ---- Step 2c: Local reward (per-node, independent of global) ----
+            local_reward_val: Optional[float] = None
+            if self.local_reward_fn is not None:
+                try:
+                    lr_val, lr_reason = self.local_reward_fn(
+                        node, action_id, status, summary, exec_meta, run.context
+                    )
+                    local_reward_val = round(lr_val, 4)
+                    node_result.local_reward = local_reward_val
+                    logger.info("  [%s] local reward = %+.4f (%s)",
+                                node.id, local_reward_val, lr_reason)
+                except Exception as exc:
+                    logger.warning("  [%s] local reward callback failed: %s",
+                                   node.id, exc)
+
             # ---- Step 3: Episode logging -----------------------------------
             if self.store and node.task_id:
                 episode_id = self._log_episode(node, action_id, logprob,
                                                status, summary, run)
                 node_result.episode_id = episode_id
+                # Store local reward linked to this episode
+                if local_reward_val is not None and episode_id:
+                    self._store_local_reward(episode_id, local_reward_val, node.id)
             elif self.store and not node.task_id:
                 logger.info("  [%s] no task_id — skipping episode log", node.id)
             else:
@@ -400,6 +461,7 @@ class WorkflowRunner:
             episode_id=episode_id,
             value=credit,
             source=RewardSource.AGGREGATE,
+            agent_id=self.agent_id,
             metadata={
                 "type": "credit_assignment",
                 "discount_factor": self._discount,
@@ -414,6 +476,33 @@ class WorkflowRunner:
             logger.warning("Failed to store reward for episode %s: %s",
                            episode_id[:8], exc)
 
+    def _store_local_reward(
+        self,
+        episode_id: str,
+        value: float,
+        node_id: str,
+    ) -> None:
+        """Store a per-node local reward (independent of global credit)."""
+        try:
+            from agent_learning.types import Reward, RewardSource
+        except ImportError:
+            return
+        reward = Reward(
+            episode_id=episode_id,
+            value=value,
+            source=RewardSource.METRIC,
+            agent_id=self.agent_id,
+            metadata={
+                "type": "local_reward",
+                "node_id": node_id,
+                "workflow_dag": self.dag.id,
+            },
+        )
+        try:
+            self.store.store_reward(reward)
+        except Exception as exc:
+            logger.warning("Failed to store local reward: %s", exc)
+
     # ------------------------------------------------------------------
     # Diagnostics
     # ------------------------------------------------------------------
@@ -427,9 +516,12 @@ class WorkflowRunner:
         for nr in run.node_results:
             flag = "✓" if nr.execution_status == "completed" else "✗"
             reward = f" [{nr.credit_reward:+.3f}]" if nr.credit_reward is not None else ""
+            local = ""
+            if hasattr(nr, "local_reward") and nr.local_reward is not None:
+                local = f" local={nr.local_reward:+.3f}"
             lines.append(
                 f"  {flag} {nr.node_name:<20} {nr.action_name or nr.action_id:<15}"
-                f" {nr.execution_status}{reward}"
+                f" {nr.execution_status}{reward}{local}"
             )
         if run.global_reward is not None:
             lines.append(f"Global reward: {run.global_reward:+.3f} — "
@@ -439,6 +531,7 @@ class WorkflowRunner:
 
 __all__ = [
     "WorkflowRunner",
-    "DecisionFn", "ExecuteFn", "RewardFn",
+    "DecisionFn", "ExecuteFn", "RewardFn", "LocalRewardFn",
     "_default_decision", "_default_execute", "_default_reward",
+    "_default_local_reward",
 ]
