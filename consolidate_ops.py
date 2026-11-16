@@ -188,6 +188,7 @@ def _write_reward(ep: dict):
 
     # Bouw een minimale context + node_result voor CostAwareReward.compute()
     action_id = ep.get("action_id", "unknown")
+    task_id = ep.get("task_id", "opslog")
     latency_ms = ep.get("request_latency_ms") or 5000
     cost = ep.get("metadata", {}).get("cost_credits", 0)
     success = ep.get("execution_status") == "completed"
@@ -197,8 +198,11 @@ def _write_reward(ep: dict):
 
     reward_fn = CostAwareReward()  # balanced preset
     node_result = NodeResult(
-        node_id=ep.get("task_id", "opslog"),
+        node_id=task_id,
+        node_name=task_id,
+        task_id=task_id,
         action_id=action_id,
+        action_name=action_id,
         execution_status="completed" if success else "failed",
         metadata={"cost": cost},
     )
