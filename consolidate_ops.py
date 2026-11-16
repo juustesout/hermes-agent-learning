@@ -116,7 +116,7 @@ def op_to_episode(op: dict) -> dict:
         "policy_id": TASK_POLICY_MAP.get(task_id, "choose-scrape-strategy"),
         "policy_version": 0,
         "action_id": action_id,
-        "action_logprob": None,
+        "action_logprob": op.get("action_logprob"),
         "context_features": cf,
         "model_deployment": model,
         "correlation_id": None,

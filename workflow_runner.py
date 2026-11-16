@@ -125,25 +125,59 @@ def _default_local_reward(
     exec_meta: Dict[str, Any],
     context: Dict[str, Any],
 ) -> Tuple[float, str]:
-    """Standaard lokale reward: 0.5 voor completed, -0.5 voor failed.
+    """Standaard lokale reward met kwaliteitschecks.
+
+    Niet alleen 'completed' vs 'failed' — checkt ook of de output
+    daadwerkelijk zinvol is (geen error page, minimale lengte, etc.).
 
     Bonusfactoren:
-    - Niet-lege result_summary: +0.3
-    - Geen error in exec_meta: +0.2
+    - completed: +0.5
+    - Content > 20 chars: +0.2
+    - Geen error-patroon in output: +0.2
+    - Bevat URLs (research): +0.1
     """
-    if status == "completed":
-        base = 0.5
-        reasons = ["completed"]
-        if summary and len(summary) > 10:
-            base += 0.3
-            reasons.append("content")
-        if not exec_meta.get("error"):
-            base += 0.2
-            reasons.append("clean")
-        reward = min(base, 1.0)
-        return reward, "+".join(reasons)
-    else:
+    if status != "completed":
         return -0.5, "failed"
+
+    base = 0.5
+    reasons = ["completed"]
+
+    # Kwaliteitscheck 1: minimale content
+    if summary and len(summary) > 20:
+        base += 0.2
+        reasons.append("content")
+    else:
+        base -= 0.2
+        reasons.append("empty")
+
+    # Kwaliteitscheck 2: error-patroon detectie
+    if summary:
+        error_patterns = [
+            "403", "404", "500", "error", "timeout", "blocked",
+            "cloudflare", "captcha", "access denied", "forbidden",
+            "not found", "could not", "failed", "exception",
+            "geen resultaat", "niets gevonden", "fout",
+        ]
+        lower_summary = summary.lower()
+        has_error = any(p in lower_summary for p in error_patterns)
+        if has_error:
+            base -= 0.3
+            reasons.append("error_content")
+        else:
+            base += 0.1
+            reasons.append("clean_output")
+
+    # Kwaliteitscheck 3: URLs in output (research nodes)
+    if summary and ("http" in summary or "www." in summary):
+        base += 0.1
+        reasons.append("has_urls")
+
+    # Kwaliteitscheck 4: structured data markers
+    if summary and any(m in summary for m in ["{", "[", "<html", "<div", "class="]):
+        base += 0.1
+        reasons.append("structured")
+
+    return max(-1.0, min(1.0, base)), "+".join(reasons)
 
 
 # ---------------------------------------------------------------------------

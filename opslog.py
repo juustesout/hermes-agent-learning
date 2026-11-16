@@ -34,8 +34,9 @@ def log_operation(
     cost: Optional[float] = None,
     summary: str = "",
     action_type: str = "",
-    metadata: Optional[dict] = None,
+    action_logprob: Optional[float] = None,
     context_features: Optional[dict] = None,
+    metadata: Optional[dict] = None,
 ):
     """Log één operatie naar operations.jsonl (append-only)."""
     _ensure_store()
@@ -45,6 +46,7 @@ def log_operation(
         "agent_id": "hermes",
         "task_id": task_id,
         "action_id": action_id,
+        "action_logprob": action_logprob,
         "target": target,
         "execution_status": "completed" if success else "failed",
         "result_summary": summary,
@@ -131,6 +133,10 @@ if __name__ == "__main__":
     p_log.add_argument("--cost", type=float, default=None)
     p_log.add_argument("--summary", default="")
     p_log.add_argument("--action-type", default="")
+    p_log.add_argument("--logprob", type=float, default=None,
+                       help="Action log probability (voor off-policy correctie)")
+    p_log.add_argument("--context-features", default=None,
+                       help="JSON string met context features (bv. '{\"cloudflare\":1.0}')")
 
     sub.add_parser("count", help="Aantal operaties")
     p_tail = sub.add_parser("tail", help="Laatste N operaties")
@@ -141,6 +147,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.cmd == "log":
+        cf = None
+        if args.context_features:
+            try:
+                cf = json.loads(args.context_features)
+            except json.JSONDecodeError:
+                print(f"Invalid context-features JSON: {args.context_features}", file=sys.stderr)
+                sys.exit(1)
         oid = log_operation(
             task_id=args.task_id,
             action_id=args.action_id,
@@ -150,6 +163,8 @@ if __name__ == "__main__":
             cost=args.cost,
             summary=args.summary,
             action_type=args.action_type,
+            action_logprob=args.logprob,
+            context_features=cf,
         )
         print(f"ok {oid}")
     elif args.cmd == "count":
