@@ -176,23 +176,36 @@ def consolidate(dry_run: bool = False) -> dict:
 
 
 def _write_reward(ep: dict):
-    """Schrijf reward in het formaat dat agent-learning store verwacht.
+    """Schrijf reward via CostAwareReward (balanced preset).
 
-    De local store slaat rewards op als JSON-array in
-    store/rewards/hermes/{episode_id}.json, waarbij elk element
-    voldoet aan Reward.to_dict().
+    Gebruikt CostAwareReward als source of truth voor de reward-formule
+    i.p.v. een eigen inline formule. De balanced preset weegt:
+      completion × 1.0 − latency_penalty × 0.3 − cost_penalty × 0.3
+      (quality = 1.0 bij opslog — geen kwaliteitsdata beschikbaar)
     """
     reward_dir = os.path.join(STORE_DIR, "rewards", "hermes")
     os.makedirs(reward_dir, exist_ok=True)
-    success = ep.get("execution_status") == "completed"
-    latency = ep.get("request_latency_ms") or 5000
-    cost = ep.get("metadata", {}).get("cost_credits", 0)
 
-    completion = 1.0 if success else 0.0
-    latency_pen = min(latency / 10000.0, 1.0)
-    cost_pen = min(cost / 10.0, 1.0)
-    reward_value = completion * 1.0 - latency_pen * 0.3 - cost_pen * 0.3
-    reward_value = max(-1.0, min(1.0, reward_value))
+    # Bouw een minimale context + node_result voor CostAwareReward.compute()
+    action_id = ep.get("action_id", "unknown")
+    latency_ms = ep.get("request_latency_ms") or 5000
+    cost = ep.get("metadata", {}).get("cost_credits", 0)
+    success = ep.get("execution_status") == "completed"
+
+    from cost_aware_rewards import CostAwareReward
+    from workflow_dag import NodeResult
+
+    reward_fn = CostAwareReward()  # balanced preset
+    node_result = NodeResult(
+        node_id=ep.get("task_id", "opslog"),
+        action_id=action_id,
+        execution_status="completed" if success else "failed",
+        metadata={"cost": cost},
+    )
+    # CostAwareReward.compute() leest latency uit context
+    ctx = {f"_latency:{node_result.node_id}": latency_ms / 1000.0,
+           f"_cost:{node_result.node_id}": cost}
+    reward_value, reason = reward_fn.compute(ctx, [node_result])
 
     import uuid
     reward_record = {
@@ -207,11 +220,10 @@ def _write_reward(ep: dict):
         "evaluator": None,
         "metadata": {
             "consolidated_from_op": True,
-            "latency_ms": latency,
+            "latency_ms": latency_ms,
             "cost_credits": cost,
-            "latency_penalty": round(latency_pen, 4),
-            "cost_penalty": round(cost_pen, 4),
             "reward_preset": "balanced",
+            "reward_reason": reason,
         },
         "created_at": datetime.now(timezone.utc).isoformat(),
     }

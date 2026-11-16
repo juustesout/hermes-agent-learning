@@ -361,12 +361,14 @@ def podcast_execute(node: WorkflowNode, action_id: str, context: Dict[str, Any])
 
 def podcast_reward(context: Dict[str, Any], node_results: List) -> Tuple[float, str]:
     """Bepaal globale reward voor een podcast run.
+    Domein-specifiek voor de podcast simulatie (niet CostAwareReward).
 
-    Factoren:
-    - Alle nodes succeeded? +1.0
-    - Publish succeeded? +0.5 extra (belangrijkste stap)
-    - Topic + research + script succeeded? +0.3 (content is core)
-    - Failures trekken af
+    Factoren (verschillend van CostAwareReward — deze gebruikt
+    critical-path bonus i.p.v. latency/cost penalties):
+    - Basis: succeeded / total nodes
+    - Critical path bonus: topic + research + script + publish (0–0.3)
+    - Publish bonus: +0.2 als publish OK, -0.3 als niet
+    - Fail penalty: -0.2 per failed node (max -0.5)
     """
     total = len(node_results)
     if total == 0:
