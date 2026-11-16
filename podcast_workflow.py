@@ -206,24 +206,103 @@ def build_podcast_dag(discount_factor: float = 0.8) -> WorkflowDAG:
 # ---------------------------------------------------------------------------
 
 
-def podcast_decision(node: WorkflowNode, context: Dict[str, Any]) -> Tuple[str, Optional[float], Dict[str, Any]]:
-    """Eenvoudige decision: gebruik context override of kies eerste action.
+# ---------------------------------------------------------------------------
+# Decision factory — gebruikt TaskPolicy wanneer beschikbaar
+# ---------------------------------------------------------------------------
 
-    In de echte workflow wordt dit vervangen door TaskPolicy.decide().
+
+def make_podcast_decision(store=None):
+    """Factory: returns a decision function that uses a TaskPolicy when available.
+
+    When no policy exists yet, initializes a ThompsonPolicy from the node's
+    action_ids so the first run already explores via Thompson sampling instead
+    of always picking action_ids[0].
+
+    Args:
+        store: Optional agent-learning store. When set, queries the store
+            for a trained TaskPolicy per node and uses policy.decide().
+            Falls back to first action when no policy exists.
     """
-    override = context.get(f"override_action:{node.id}")
-    if override:
-        return override, None, {"source": "context_override"}
+    # Cache for auto-created policies per task_id
+    _auto_policies: Dict[str, ThompsonPolicy] = {}
 
-    # Als de context een "correct" pad heeft, gebruik dat
-    correct_path = context.get("correct_path", {})
-    if node.id in correct_path:
-        return correct_path[node.id], None, {"source": "correct_path"}
+    def _get_or_create_policy(node: WorkflowNode) -> tuple:
+        """Get existing policy or create a fresh ThompsonPolicy."""
+        if store is None or not node.task_id:
+            return None, None, "no_store"
 
-    # Anders: eerste action (fallback)
-    if node.action_ids:
-        return node.action_ids[0], None, {"source": "fallback"}
-    return "skip", None, {"source": "no_actions"}
+        try:
+            snapshot = store.get_active_policy("hermes", node.task_id)
+            if snapshot is not None:
+                # Check if it's a Thompson policy
+                kind = snapshot.metadata.get("policy_kind", "")
+                if kind == "thompson" or "thompson_alpha" in snapshot.metadata:
+                    from thompson_policy import ThompsonPolicy
+                    policy = ThompsonPolicy.from_snapshot(snapshot)
+                    return policy, snapshot.version, "thompson_policy"
+                else:
+                    # Try SoftmaxPolicy for backward compatibility
+                    from agent_learning.policy.softmax_bandit import SoftmaxPolicy
+                    policy = SoftmaxPolicy.from_snapshot(snapshot)
+                    return policy, snapshot.version, "softmax_policy"
+        except Exception:
+            pass
+
+        # No policy exists — create one from node's action_ids
+        if node.action_ids and node.task_id:
+            # Check if we already created one this session
+            if node.task_id in _auto_policies:
+                p = _auto_policies[node.task_id]
+                return p, p._snapshot.version, "auto_thompson_cached"
+
+            try:
+                from thompson_policy import ThompsonPolicy
+                from agent_learning.types import Action
+                actions = [Action(id=aid) for aid in node.action_ids]
+                policy = ThompsonPolicy.from_actions(
+                    actions, agent_id="hermes", task_id=node.task_id,
+                    prior_alpha=1.0, prior_beta=1.0,  # uniform prior
+                )
+                # Store it so subsequent runs find it
+                if store is not None:
+                    try:
+                        store.store_policy(policy._snapshot)
+                    except Exception:
+                        pass
+                _auto_policies[node.task_id] = policy
+                return policy, 0, "auto_thompson"
+            except Exception:
+                pass
+
+        return None, None, "fallback"
+
+    def _decide(node: WorkflowNode, context: Dict[str, Any]) -> Tuple[str, Optional[float], Dict[str, Any]]:
+        """Echte decision: probeer TaskPolicy, dan context override, dan fallback."""
+        override = context.get(f"override_action:{node.id}")
+        if override:
+            return override, None, {"source": "context_override"}
+
+        correct_path = context.get("correct_path", {})
+        if node.id in correct_path:
+            return correct_path[node.id], None, {"source": "correct_path"}
+
+        # Probeer policy uit store of auto-create
+        policy, version, source = _get_or_create_policy(node)
+        if policy is not None:
+            try:
+                decision = policy.choose()
+                return decision.action.id, decision.logprob, {
+                    "source": source,
+                    "policy_version": version,
+                }
+            except Exception:
+                pass
+
+        # Fallback: eerste action
+        if node.action_ids:
+            return node.action_ids[0], None, {"source": "fallback"}
+        return "skip", None, {"source": "no_actions"}
+    return _decide
 
 
 def podcast_execute(node: WorkflowNode, action_id: str, context: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
@@ -450,7 +529,7 @@ def main() -> None:
             dag,
             store=store,
             agent_id="hermes",
-            decision_fn=podcast_decision,
+            decision_fn=make_podcast_decision(store),
             execute_fn=podcast_execute,
             reward_fn=podcast_reward,
             discount_factor=args.discount,

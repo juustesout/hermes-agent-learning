@@ -9,7 +9,7 @@ uniform and slow to converge).
 Beta(α, β):
   α = prior_successes + observed_successes
   β = prior_failures  + observed_failures
-  Prior: Beta(2, 2) — slight optimism (centered at 0.5, not uniform)
+  Prior: Beta(1, 1) — uniform (flat) prior
 
 Reward scaling (REINFORCE reward ∈ [-1, 1] → Beta observation):
   success_weight = (reward + 1) / 2  → maps [-1,1] to [0,1]
@@ -38,8 +38,8 @@ from agent_learning.types import Action, PolicySnapshot
 # Beta helpers
 # ---------------------------------------------------------------------------
 
-_BETA_PRIOR_ALPHA = 2.0
-_BETA_PRIOR_BETA = 2.0
+_BETA_PRIOR_ALPHA = 1.0
+_BETA_PRIOR_BETA = 1.0
 _MAX_LOGIT_ABS = 10.0  # placeholder for compatibility
 
 
@@ -352,8 +352,7 @@ class ThompsonLearner:
         for action_id, (alpha_delta, beta_delta) in updates.items():
             alpha_add = alpha_delta * boost
             beta_add = beta_delta * boost
-            policy.observe(action_id, (alpha_delta - beta_delta))  # rough reward
-            # Actually do real Beta update
+            # Direct Beta update (aggregated deltas, not per-step observe)
             alphas = policy._snapshot.metadata.get("thompson_alpha", {})
             betas = policy._snapshot.metadata.get("thompson_beta", {})
             alphas[action_id] = alphas.get(action_id, self.prior_alpha) + alpha_add

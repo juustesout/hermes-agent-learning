@@ -19,6 +19,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+import env_setup  # noqa: F401 — ensures LocalFileStore backend
 
 from thompson_policy import train_thompson
 from agent_learning.storage.cosmos import get_default_store
@@ -31,8 +32,8 @@ def main() -> int:
     parser.add_argument("--task-prefix", default=None, help="Train all tasks matching prefix")
     parser.add_argument("--limit", type=int, default=200)
     parser.add_argument("--min-episodes", type=int, default=3)
-    parser.add_argument("--prior-alpha", type=float, default=2.0)
-    parser.add_argument("--prior-beta", type=float, default=2.0)
+    parser.add_argument("--prior-alpha", type=float, default=1.0)
+    parser.add_argument("--prior-beta", type=float, default=1.0)
     args = parser.parse_args()
 
     store = get_default_store()
