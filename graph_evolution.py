@@ -17,6 +17,7 @@ import math
 import os
 import sys
 import time
+from html import escape
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -773,6 +774,9 @@ class Dashboard:
         limit: int = 100,
     ) -> str:
         """Generate a self-contained HTML dashboard with charts."""
+        def _esc(value: Any) -> str:
+            return escape(str(value), quote=True)
+
         all_eps = self.analyzer.store.query_episodes(
             self.analyzer.agent_id, limit=limit
         )
@@ -835,7 +839,7 @@ tr:hover td{background:#1c2128}
             ok_rate = total_ok / n_eps if n_eps > 0 else 0
 
             html += f"""<div class="card">
-<h2>{dag_id}</h2>
+<h2>{_esc(dag_id)}</h2>
 <span class="stat"><strong>{n_runs}</strong> runs</span>
 <span class="stat"><strong>{n_eps}</strong> episodes</span>
 <span class="stat"><strong>{total_ok}✓</strong> / {total_fail}✗</span>
@@ -855,8 +859,12 @@ tr:hover td{background:#1c2128}
                     credit = ep.metadata.get("credit_reward", "")
                     scls = "ok" if status == "completed" else "fail"
                     credit_str = f"<span class='credit'>{credit:+.3f}</span>" if isinstance(credit, (int, float)) else ""
-                    html += f"<tr><td>{run_id[:6]}</td><td>[{dist}] {node}</td><td>{action}</td>"
-                    html += f"<td class='{scls}'>{status}</td><td>{credit_str}</td></tr>\n"
+                    html += (
+                        f"<tr><td>{_esc(str(run_id)[:6])}</td>"
+                        f"<td>[{_esc(dist)}] {_esc(node)}</td>"
+                        f"<td>{_esc(action)}</td>"
+                    )
+                    html += f"<td class='{scls}'>{_esc(status)}</td><td>{credit_str}</td></tr>\n"
 
             html += "</table></div>\n"
 

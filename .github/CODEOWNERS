@@ -1,0 +1,6 @@
+# Default owner for entire repository
+* @juustesout
+
+# CI/security automation should always request the same owner explicitly
+.github/workflows/* @juustesout
+.github/dependabot.yml @juustesout

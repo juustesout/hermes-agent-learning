@@ -107,6 +107,10 @@ print('Dashboard → dashboard/index.html')
 "
 ```
 
+Security note: dashboard output now HTML-escapes all episode metadata fields
+before rendering table cells/headings. This prevents script injection when runs
+contain untrusted values (for example custom `action_id` strings).
+
 ---
 
 ## Project Structure
@@ -164,6 +168,28 @@ Learner
 |-----|----------|--------|
 | `train-scrape-policy` | Every 6 hours | Train ContextualAdaptiveBandit on scrape episodes |
 | `podcast-workflow-daily` | Daily 13:00 UTC | Train all policies + run podcast workflow + dashboard |
+
+## CI (GitHub Actions)
+
+Deze repo bevat CI in [.github/workflows/ci.yml](./.github/workflows/ci.yml).
+Bij pushes naar `main` en op pull requests draait de pipeline op Python 3.11 en 3.12:
+
+- `ruff check .` (linting)
+- `bandit -r .` (security static analysis, exclusief `store/` en `dashboard/`)
+- `python -m compileall -q .` (syntax check)
+
+## Dependency Updates & Vulnerability Audit
+
+- Dependabot configuratie: [.github/dependabot.yml](./.github/dependabot.yml)
+  - `pip` updates (wekelijks)
+  - GitHub Actions updates (wekelijks)
+- Fallback audit workflow: [.github/workflows/security-audit.yml](./.github/workflows/security-audit.yml)
+  - draait `pip-audit` op pull requests, wekelijks en handmatig (`workflow_dispatch`)
+
+Als Dependabot in een andere repo niet opent, controleer dan in GitHub:
+- **Settings → Security & analysis** (Dependabot alerts + security updates)
+- **Actions permissions** en of workflows mogen draaien
+- of de default branch echt `main` is
 
 ---
 
