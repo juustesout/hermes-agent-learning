@@ -257,5 +257,9 @@ if __name__ == "__main__":
 
     if not result.get("dry_run") and args.train:
         print("  Policy training gestart...")
-        # Roep train_adaptive.py aan
-        os.system(f"cd {STORE_DIR}/.. && python3 train_adaptive.py --agent-id hermes --task-id choose-scrape-strategy 2>&1")
+        import subprocess
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "train_adaptive.py")
+        subprocess.run(
+            [sys.executable, script, "--agent-id", "hermes", "--task-id", "choose-scrape-strategy"],
+            check=False,
+        )
