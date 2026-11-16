@@ -248,6 +248,22 @@ class WorkflowRunner:
 
             node_result.completed_at = datetime.now(timezone.utc).isoformat()
 
+            # ---- Step 2b: Store latency/cost in context for reward function --
+            # CostAwareReward.compute() reads these keys from context.
+            # Actual latency from timestamps (fallback to exec_meta if available).
+            if started_at and node_result.completed_at:
+                try:
+                    t0 = datetime.fromisoformat(started_at)
+                    t1 = datetime.fromisoformat(node_result.completed_at)
+                    actual_latency = max((t1 - t0).total_seconds(), 0.001)
+                except Exception:
+                    actual_latency = exec_meta.get("latency_s", 5.0)
+            else:
+                actual_latency = exec_meta.get("latency_s", 5.0)
+            run.context[f"_latency:{node.id}"] = actual_latency
+            run.context[f"_cost:{node.id}"] = exec_meta.get("cost",
+                None)  # None = fallback to estimate_cost in CostAwareReward
+
             # ---- Step 3: Episode logging -----------------------------------
             if self.store and node.task_id:
                 episode_id = self._log_episode(node, action_id, logprob,
