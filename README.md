@@ -169,6 +169,12 @@ Learner
 | `train-scrape-policy` | Every 6 hours | Train ContextualAdaptiveBandit on scrape episodes |
 | `podcast-workflow-daily` | Daily 13:00 UTC | Train all policies + run podcast workflow + dashboard |
 
+Cron scripts zijn nu path-portable: ze gebruiken standaard de repository-map
+als basis en accepteren overrides via environment variables:
+
+- `AGENT_LEARNING_LOCAL_STORE_DIR` (default: `<repo>/store`)
+- `DASHBOARD_DIR` (default: `<repo>/dashboard`, alleen `cron_workflow.sh`)
+
 ## CI (GitHub Actions)
 
 Deze repo bevat CI in [.github/workflows/ci.yml](./.github/workflows/ci.yml).

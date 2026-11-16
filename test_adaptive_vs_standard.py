@@ -18,13 +18,19 @@ import copy
 import math
 import random
 import sys
+import tempfile
 from typing import Dict, List
+from pathlib import Path
 
 # Python path voor onze custom learner
 import os
-sys.path.insert(0, "/opt/data/profiles/operator/agent-learning")
-os.environ["AGENT_LEARNING_STORE_BACKEND"] = "local"
-os.environ["AGENT_LEARNING_LOCAL_STORE_DIR"] = "/tmp/agent-learning-test-store"
+REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT))
+os.environ.setdefault("AGENT_LEARNING_STORE_BACKEND", "local")
+os.environ.setdefault(
+    "AGENT_LEARNING_LOCAL_STORE_DIR",
+    str(Path(tempfile.gettempdir()) / "agent-learning-test-store"),
+)
 
 from agent_learning.config import LearnerConfig
 from agent_learning.learners.reinforce import ReinforceLearner

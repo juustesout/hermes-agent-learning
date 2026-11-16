@@ -4,17 +4,27 @@
 # Vereist:
 #   Hermes venv met agent-learning geïnstalleerd
 #   AGENT_LEARNING_STORE_BACKEND=local
-#   AGENT_LEARNING_LOCAL_STORE_DIR=/opt/data/profiles/operator/agent-learning/store
+#   AGENT_LEARNING_LOCAL_STORE_DIR=<repo>/store (default)
 
 set -e
-cd /opt/data/profiles/operator/agent-learning || exit 1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$SCRIPT_DIR"
+if [ -d "/opt/hermes/.venv/bin" ]; then
+  export PATH="/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+fi
 
-export PATH="/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin"
-export AGENT_LEARNING_STORE_BACKEND=local
-export AGENT_LEARNING_LOCAL_STORE_DIR=/opt/data/profiles/operator/agent-learning/store
-export AGENT_LEARNING_ADAPTIVE_LOGIT_DECAY=0.97
-export AGENT_LEARNING_ADAPTIVE_FAILURE_THRESHOLD=3
-export AGENT_LEARNING_ADAPTIVE_LR_BOOST=5.0
+: "${AGENT_LEARNING_STORE_BACKEND:=local}"
+: "${AGENT_LEARNING_LOCAL_STORE_DIR:=$REPO_ROOT/store}"
+: "${AGENT_LEARNING_ADAPTIVE_LOGIT_DECAY:=0.97}"
+: "${AGENT_LEARNING_ADAPTIVE_FAILURE_THRESHOLD:=3}"
+: "${AGENT_LEARNING_ADAPTIVE_LR_BOOST:=5.0}"
+export AGENT_LEARNING_STORE_BACKEND
+export AGENT_LEARNING_LOCAL_STORE_DIR
+export AGENT_LEARNING_ADAPTIVE_LOGIT_DECAY
+export AGENT_LEARNING_ADAPTIVE_FAILURE_THRESHOLD
+export AGENT_LEARNING_ADAPTIVE_LR_BOOST
+
+cd "$REPO_ROOT" || exit 1
 
 echo "=== HERMES WORKFLOW CRON ==="
 echo "Started at $(date)"
@@ -48,12 +58,6 @@ echo "=== Fase 2: Podcast workflow run ==="
 python3 -c "
 import sys, os
 sys.path.insert(0, '.')
-os.environ.update({
-    k: v for k, v in {
-        'AGENT_LEARNING_STORE_BACKEND': 'local',
-        'AGENT_LEARNING_LOCAL_STORE_DIR': '/opt/data/profiles/operator/agent-learning/store',
-    }.items()
-})
 
 from podcast_workflow import build_podcast_dag, podcast_decision, podcast_execute, podcast_reward
 from workflow_runner import WorkflowRunner
@@ -85,14 +89,13 @@ for nr in run.node_results:
 echo ""
 echo "=== Fase 3: Dashboard ==="
 
-DASHBOARD_DIR="/opt/data/profiles/operator/agent-learning/dashboard"
+DASHBOARD_DIR="${DASHBOARD_DIR:-$REPO_ROOT/dashboard}"
+export DASHBOARD_DIR
 mkdir -p "$DASHBOARD_DIR"
 
 python3 -c "
 import sys, os
 sys.path.insert(0, '.')
-os.environ['AGENT_LEARNING_STORE_BACKEND'] = 'local'
-os.environ['AGENT_LEARNING_LOCAL_STORE_DIR'] = '/opt/data/profiles/operator/agent-learning/store'
 
 from graph_evolution import Dashboard
 from agent_learning.storage.cosmos import get_default_store
@@ -100,7 +103,7 @@ from agent_learning.storage.cosmos import get_default_store
 store = get_default_store()
 dash = Dashboard(store)
 html = dash.html_dashboard()
-path = '/opt/data/profiles/operator/agent-learning/dashboard/index.html'
+path = os.path.join(os.environ.get('DASHBOARD_DIR', 'dashboard'), 'index.html')
 with open(path, 'w') as f:
     f.write(html)
 print(f'Dashboard written: {path} ({len(html)} chars)')
