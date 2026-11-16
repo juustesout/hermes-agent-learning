@@ -150,16 +150,19 @@ def _default_local_reward(
         base -= 0.2
         reasons.append("empty")
 
-    # Kwaliteitscheck 2: error-patroon detectie
+    # Kwaliteitscheck 2: error-patroon detectie (word boundaries voor nummers)
     if summary:
         error_patterns = [
-            "403", "404", "500", "error", "timeout", "blocked",
+            "timeout", "blocked",
             "cloudflare", "captcha", "access denied", "forbidden",
             "not found", "could not", "failed", "exception",
             "geen resultaat", "niets gevonden", "fout",
         ]
-        lower_summary = summary.lower()
+        # Numerieke foutcodes met word boundaries
+        error_codes = [" 403 ", " 404 ", " 500 ", " 502 ", " 503 "]
+        lower_summary = f" {summary.lower()} "  # padding voor word boundary
         has_error = any(p in lower_summary for p in error_patterns)
+        has_error = has_error or any(c in lower_summary for c in error_codes)
         if has_error:
             base -= 0.3
             reasons.append("error_content")
