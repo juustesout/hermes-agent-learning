@@ -162,12 +162,59 @@ Learner
         └── ContextualAdaptiveBanditLearner (W·φ gradients)
 ```
 
-## Cron Schedule
+## Operation Logging (OpsLog)
+
+Sinds 16 Nov 2026: elke tool-operatie wordt automatisch gelogd naar `store/operations.jsonl`.
+De nachtelijke cron consolideert de ruwe logs naar volwaardige leer-episodes.
+
+| Component | Locatie |
+|-----------|---------|
+| **CLI/Python logger** | `opslog.py` |
+| **Shell wrapper** | `scripts/opslog.sh` |
+| **Consolidator** | `consolidate_ops.py` — ruwe log → episode + reward |
+| **Live log** | `store/operations.jsonl` (append-only) |
+| **Cron** | `opslog-consolidate` — elke nacht 03:00 UTC |
+
+### Gebruik
+
+```python
+from opslog import log_operation
+log_operation(task_id="choose-scrape-strategy",
+  action_id="use_webclaw_scrape", target="site.nl",
+  duration_ms=3100, cost=1, summary="WebClaw scrape 24500 chars",
+  action_type="web_scrape")
+```
+
+```bash
+# Bash wrapper
+bash scripts/opslog.sh log <task-id> <action-id> <target> [dur_ms] [cost] [ok] [summary] [type]
+
+# Stats
+python3 opslog.py stats
+python3 opslog.py tail --n 20
+python3 opslog.py count
+
+# Consolidatie
+python3 consolidate_ops.py --run
+```
+
+### Task-ID conventies
+
+| Task-ID | Action-Type |
+|---------|-------------|
+| `choose-scrape-strategy` | web_scrape, web_search |
+| `db-query` | database_query |
+| `wp-publish` | wp_rest_api |
+| `web-research` | web_search |
+| `podcast-*` | research, script, audio, publish |
+
+### Cron Schedule
 
 | Job | Schedule | Action |
 |-----|----------|--------|
 | `train-scrape-policy` | Every 6 hours | Train ContextualAdaptiveBandit on scrape episodes |
 | `podcast-workflow-daily` | Daily 13:00 UTC | Train all policies + run podcast workflow + dashboard |
+| `opslog-consolidate` | Daily 03:00 UTC | Consolidate operations.jsonl → learning episodes |
 
 Cron scripts zijn nu path-portable: ze gebruiken standaard de repository-map
 als basis en accepteren overrides via environment variables:
