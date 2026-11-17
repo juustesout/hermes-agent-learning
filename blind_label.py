@@ -36,8 +36,13 @@ OUTCOME_RECORD = "outcome"
 SOURCE_ENV = "AGENT_LEARNING_EVIDENCE_SOURCE"
 SOURCE_SIM = "sim"
 SOURCE_LIVE = "live"
-ARM_BALANCE_MIN_N = 20
+_WRITE_SOURCE = SOURCE_LIVE
+OVERLAP_ALARM = 0.8
+OVERLAP_MIN_N = 30
+ARM_BALANCE_MIN_N = 30
 ARM_BALANCE_ALPHA = 0.01
+BALANCE_MIN_N = ARM_BALANCE_MIN_N
+BALANCE_ALPHA = ARM_BALANCE_ALPHA
 HIDDEN_FIELDS = frozenset(
     {
         "arm",
@@ -87,24 +92,106 @@ def _path(name: str) -> Path:
     return evidence_dir() / name
 
 
+def live_evidence_dir() -> Path:
+    return (Path(opslog.default_store_dir()) / "evidence" / WORKFLOW).resolve()
+
+
+def set_write_source(source: str) -> None:
+    global _WRITE_SOURCE
+    if source not in (SOURCE_LIVE, SOURCE_SIM):
+        raise ValueError(f"unknown source {source!r}")
+    if source == SOURCE_SIM:
+        env = os.environ.get("AGENT_LEARNING_EVIDENCE_DIR", "").strip()
+        if not env or Path(env).resolve() == live_evidence_dir():
+            raise RuntimeError(
+                "sim source may not write to the live evidence dir or to an unset dir"
+            )
+    _WRITE_SOURCE = source
+    os.environ[SOURCE_ENV] = source
+
+
 def current_source() -> str:
+    if _WRITE_SOURCE == SOURCE_SIM:
+        return SOURCE_SIM
     raw = os.environ.get(SOURCE_ENV, "").strip().lower()
     if raw in {SOURCE_SIM, "simulation"}:
         return SOURCE_SIM
     return SOURCE_LIVE
 
 
+def is_live(row: Optional[dict]) -> bool:
+    if not row:
+        return False
+    src = str(row.get("source") or SOURCE_LIVE).strip().lower()
+    if src in {SOURCE_SIM, "simulation"}:
+        return False
+    if str(row.get("rater") or "").strip().lower() == SOURCE_SIM:
+        return False
+    if str(row.get("notes") or "").strip().lower() == SOURCE_SIM:
+        return False
+    return True
+
+
 def is_sim(row: Optional[dict]) -> bool:
     if not row:
         return False
-    src = str(row.get("source") or "").strip().lower()
-    if src in {SOURCE_SIM, "simulation"}:
-        return True
-    return str(row.get("rater") or "").strip().lower() == SOURCE_SIM
+    return not is_live(row)
 
 
 def live_only(rows: Iterable[dict]) -> list[dict]:
-    return [row for row in rows if not is_sim(row)]
+    return [row for row in rows if is_live(row)]
+
+
+def _view(rows, view: str = "live"):
+    if view == "live":
+        return [row for row in rows if is_live(row)]
+    if view == "sim":
+        return [row for row in rows if not is_live(row)]
+    raise ValueError(f"unknown view {view!r}")
+
+
+def overlap_stats(decisions: list[dict]) -> dict:
+    pairs = [
+        (d.get("chosen_id"), d.get("baseline_pick_id"))
+        for d in decisions
+        if d.get("chosen_id") and d.get("baseline_pick_id")
+    ]
+    same = sum(1 for chosen, base in pairs if chosen == base)
+    return {"n": len(pairs), "same": same, "rate": (same / len(pairs)) if pairs else None}
+
+
+def binom_two_sided(k: int, n: int) -> Optional[float]:
+    if n == 0:
+        return None
+    pmf = [math.comb(n, i) / 2 ** n for i in range(n + 1)]
+    pk = pmf[k]
+    return min(1.0, sum(p for p in pmf if p <= pk * (1 + 1e-9)))
+
+
+def balance_stats(arms: list[str]) -> dict:
+    left = sum(1 for a in arms if a == "L")
+    right = sum(1 for a in arms if a == "B")
+    n = left + right
+    p_value = binom_two_sided(left, n)
+    return {
+        "L": left,
+        "B": right,
+        "n": n,
+        "p_value": p_value,
+        "ok": n < BALANCE_MIN_N or p_value is None or p_value >= BALANCE_ALPHA,
+    }
+
+
+def ranker_health_alarms(decisions: list[dict], view: str = "live") -> tuple[list[str], dict, dict]:
+    rows = _view(decisions, view)
+    overlap = overlap_stats(rows)
+    balance = balance_stats([str(d.get("arm") or "") for d in rows])
+    alarms = []
+    if overlap["n"] >= OVERLAP_MIN_N and overlap["rate"] is not None and overlap["rate"] >= OVERLAP_ALARM:
+        alarms.append("high_overlap")
+    if balance["n"] >= BALANCE_MIN_N and balance["p_value"] is not None and balance["p_value"] < BALANCE_ALPHA:
+        alarms.append("arm_imbalance")
+    return alarms, overlap, balance
 
 
 def parse_bool(value: Any) -> bool:
@@ -196,8 +283,7 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _append_jsonl(path: Path, row: dict) -> None:
-    payload = dict(row)
-    payload.setdefault("source", current_source())
+    payload = {**row, "source": row.get("source", current_source())}
 
     def _write():
         with path.open("a", encoding="utf-8") as f:
@@ -422,9 +508,9 @@ def record_label(
     return payload
 
 
-def _latest_labels() -> dict[str, dict]:
+def _latest_labels(view: str = "live") -> dict[str, dict]:
     latest = {}
-    for row in load_labels():
+    for row in _view(load_labels(), view):
         item_id = str(row.get("id") or "")
         if item_id:
             latest[item_id] = row
@@ -449,18 +535,14 @@ def _by_id(rows: Iterable[dict]) -> dict[str, dict]:
     return out
 
 
-def report(*, include_sim: bool = False) -> dict:
-    items = load_items() if include_sim else live_only(load_items())
-    queue = load_queue() if include_sim else live_only(load_queue())
-    decisions = load_decisions() if include_sim else live_only(load_decisions())
-    outcomes = load_outcomes() if include_sim else live_only(load_outcomes())
+def report(view: str = "live") -> dict:
+    items = _view(load_items(), view)
+    queue = _view(load_queue(), view)
+    decisions = _view(load_decisions(), view)
+    outcomes = _view(load_outcomes(), view)
     assignments = _by_id(decisions)
     assignments.update(_by_id(outcomes))
-    latest = {
-        item_id: row
-        for item_id, row in _latest_labels().items()
-        if include_sim or not is_sim(row)
-    }
+    latest = _latest_labels(view)
     labeled_n = sum(1 for row in queue if row.get("id") in latest)
     remaining = len(queue) - labeled_n
     compared = 0
@@ -504,8 +586,7 @@ def report(*, include_sim: bool = False) -> dict:
         "agreement": agreement,
         "agreement_floor": AGREEMENT_FLOOR,
         "automatic_measure_ok": None if agreement is None else agreement >= AGREEMENT_FLOOR,
-        "include_sim": include_sim,
-        "sim_rows": sum(1 for row in load_items() if is_sim(row)),
+        "view": view,
         "overlap": selection_overlap(decisions),
         "arm_balance": arm_balance(decisions),
     }
@@ -600,20 +681,20 @@ def selection_overlap(decisions: Iterable[dict]) -> dict:
     }
 
 
-def audit(*, expected_posts: int = EXPECTED_POSTS_PER_DAY, hours: int = 24) -> dict:
+def audit(*, expected_posts: int = EXPECTED_POSTS_PER_DAY, hours: int = 24, view: str = "live") -> dict:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    items = [row for row in load_items() if (_parse_ts(row.get("posted_at")) or cutoff) >= cutoff]
+    items = [row for row in _view(load_items(), view) if (_parse_ts(row.get("posted_at")) or cutoff) >= cutoff]
     outcomes = [
         row
-        for row in load_outcomes()
+        for row in _view(load_outcomes(), view)
         if (_parse_ts(row.get("assigned_at")) or cutoff) >= cutoff
     ]
     decisions = [
         row
-        for row in load_decisions()
+        for row in _view(load_decisions(), view)
         if (_parse_ts(row.get("decided_at")) or cutoff) >= cutoff
     ]
-    runs = [row for row in load_runs() if (_parse_ts(row.get("recorded_at")) or cutoff) >= cutoff]
+    runs = [row for row in _view(load_runs(), view) if (_parse_ts(row.get("recorded_at")) or cutoff) >= cutoff]
     attempted = sum(int(row.get("attempted") or 0) for row in runs)
     posted_runs = sum(int(row.get("posted") or 0) for row in runs)
     failed_runs = sum(int(row.get("failed") or 0) for row in runs)
@@ -638,13 +719,8 @@ def audit(*, expected_posts: int = EXPECTED_POSTS_PER_DAY, hours: int = 24) -> d
         alarms.append("posted_below_expected")
     if attempted and len(items) < attempted:
         alarms.append("enqueue_lag")
-    overlap = selection_overlap(decisions)
-    balance = arm_balance(decisions)
-    if not balance["ok"]:
-        alarms.append("arm_imbalance")
-    sim_items = sum(1 for row in items if is_sim(row))
-    if sim_items:
-        alarms.append("sim_data_in_evidence")
+    ranker_alarms, overlap, balance = ranker_health_alarms(decisions, view)
+    alarms.extend(ranker_alarms)
     payload = {
         "ok": not alarms,
         "hours": hours,
@@ -659,8 +735,9 @@ def audit(*, expected_posts: int = EXPECTED_POSTS_PER_DAY, hours: int = 24) -> d
         "failed_runs": failed_runs,
         "posted_without_decision": missing_decision,
         "overlap": overlap,
-        "arm_balance": balance,
-        "sim_items": sim_items,
+        "balance": balance,
+        "arm_balance": arm_balance(decisions),
+        "view": view,
         "alarms": alarms,
         "success_definition": SUCCESS_DEFINITION,
     }

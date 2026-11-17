@@ -30,8 +30,8 @@ def test_200_runs_write_decision_before_post(tmp_path, monkeypatch):
     assert "items_assignments_mismatch" not in summary["alarms"]
     assert summary["elapsed_s"] < 60
     items = {row["id"] for row in blind_label.load_items()}
-    chosen = {row["chosen_id"] for row in hn_ranker.load_decisions()}
-    outcomes = {row["chosen_id"] for row in hn_ranker.load_outcomes()}
+    chosen = {row["chosen_id"] for row in hn_ranker.load_decisions(view="sim")}
+    outcomes = {row["chosen_id"] for row in hn_ranker.load_outcomes(view="sim")}
     assert items == chosen == outcomes
     assert summary["decision_arms"]["L"] > 0
     assert summary["decision_arms"]["B"] > 0
@@ -40,7 +40,8 @@ def test_200_runs_write_decision_before_post(tmp_path, monkeypatch):
     assert summary["live_agreement"] is None
     assert summary["overlap"]["n"] == 400
     assert summary["arm_balance"]["ok"] is True
-    assert "sim_data_in_evidence" in summary["alarms"]
+    assert "sim_data_in_evidence" not in summary["alarms"]
+    assert "high_overlap" not in summary["alarms"]
     for row in blind_label.load_items():
         assert row.get("source") == "sim"
     for row in blind_label.load_labels():
@@ -51,7 +52,7 @@ def test_failures_are_enqueued(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     summary = hn_sim.run_sim(runs=40, error_rate=0.5, auto_label=False, seed=7)
     assert summary["jobs_failed"] > 0
-    outcomes = hn_ranker.load_outcomes()
+    outcomes = hn_ranker.load_outcomes(view="sim")
     failed = [row for row in outcomes if row.get("technical_success") is False]
     assert failed
     assert summary["jobs_posted"] == summary["wp_posts"]
@@ -89,8 +90,8 @@ def test_cli_run_uses_isolated_evidence(tmp_path, monkeypatch, capsys):
 def test_sim_labels_never_enter_training(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     hn_sim.run_sim(runs=8, error_rate=0.0, auto_label=True, seed=3)
-    assert blind_label.report(include_sim=False)["labeled"] == 0
-    assert blind_label.report(include_sim=False)["agreement"] is None
+    assert blind_label.report(view="live")["labeled"] == 0
+    assert blind_label.report(view="live")["agreement"] is None
     assert hn_ranker.collect_training_rows() == []
     from datetime import datetime, timezone
     model = hn_ranker.train(cutoff=datetime(2026, 11, 17, tzinfo=timezone.utc), min_n=1)

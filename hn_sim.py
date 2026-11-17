@@ -191,10 +191,10 @@ def run_once(
 
 
 def summarize() -> dict:
-    report = blind_label.report(include_sim=True)
-    live = blind_label.report(include_sim=False)
-    audit = blind_label.audit(expected_posts=max(report["posted"], 1), hours=24 * 365)
-    decisions = hn_ranker.load_decisions()
+    report = blind_label.report(view="sim")
+    live = blind_label.report(view="live")
+    audit = blind_label.audit(expected_posts=max(report["posted"], 1), hours=24 * 365, view="sim")
+    decisions = hn_ranker.load_decisions(view="sim")
     arms = {"L": 0, "B": 0}
     for row in decisions:
         arm = row.get("arm")
@@ -211,6 +211,7 @@ def summarize() -> dict:
         "decisions": len(decisions),
         "decision_arms": arms,
         "overlap": audit.get("overlap"),
+        "balance": audit.get("balance"),
         "arm_balance": audit.get("arm_balance"),
         "audit_ok": audit["ok"],
         "alarms": audit["alarms"],
@@ -227,11 +228,13 @@ def run_sim(
     seed: int = 1,
     catalog_n: int = CATALOG_N,
 ) -> dict:
-    os.environ[blind_label.SOURCE_ENV] = blind_label.SOURCE_SIM
-    mock = WPMock(error_rate=error_rate, seed=seed)
-    base = mock.start()
-    t0 = time.time()
+    prev_source = blind_label._WRITE_SOURCE
+    blind_label.set_write_source(blind_label.SOURCE_SIM)
+    mock = None
     try:
+        mock = WPMock(error_rate=error_rate, seed=seed)
+        base = mock.start()
+        t0 = time.time()
         client = WPDraftClient(base, "crashtest", "secret", retries=3)
         catalog = make_catalog(n=catalog_n, seed=seed)
         rng = random.Random(seed)
@@ -263,7 +266,12 @@ def run_sim(
         )
         return summary
     finally:
-        mock.stop()
+        if mock is not None:
+            mock.stop()
+        try:
+            blind_label.set_write_source(prev_source)
+        except RuntimeError:
+            blind_label._WRITE_SOURCE = prev_source
 
 
 def main(argv=None) -> int:
@@ -292,7 +300,7 @@ def main(argv=None) -> int:
             catalog_n=args.catalog,
         )
         print(json.dumps(payload, indent=2, default=str))
-        alarms = [a for a in payload.get("alarms") or [] if a != "sim_data_in_evidence"]
+        alarms = payload.get("alarms") or []
         return 0 if not alarms and not payload.get("missing_decision") else 2
     parser.print_help()
     return 0

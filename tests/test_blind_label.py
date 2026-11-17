@@ -204,12 +204,12 @@ def test_report_ignores_sim_labels(tmp_path, monkeypatch):
     monkeypatch.setenv(blind_label.SOURCE_ENV, blind_label.SOURCE_SIM)
     blind_label.enqueue_item(_item("sim-1", auto_relevant=True))
     blind_label.record_label("sim-1", relevant=True, duplicate=False, needs_correction=False, rater="sim")
-    live = blind_label.report(include_sim=False)
-    mixed = blind_label.report(include_sim=True)
+    live = blind_label.report(view="live")
+    sim = blind_label.report(view="sim")
     assert live["labeled"] == 0
     assert live["agreement"] is None
-    assert mixed["labeled"] == 1
-    assert mixed["agreement"] == 1.0
+    assert sim["labeled"] == 1
+    assert sim["agreement"] == 1.0
 
 
 def test_arm_balance_and_overlap():
