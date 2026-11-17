@@ -182,10 +182,18 @@ naar volwaardige leer-episodes.
 
 | Component | Locatie |
 |-----------|---------|
-| **Hermes plugin** | `hermes_plugin/__init__.py` — `post_tool_call` hook → `opslog.log_operation()` |
+| **Hermes plugin** | `hermes_plugin/__init__.py` — `post_tool_call` hook → `opslog.log_operation()` (`source=hermes`) |
+| **Automation logger** | `run_log.py` — cron/workflow steps write themselves (`source=automation`) |
 | **Consolidator** | `consolidate_ops.py` — ruwe log → episode + reward |
 | **Live log** | `store/operations.jsonl` (append-only) |
+| **Run heartbeat** | `store/runs_automation.jsonl` — start/end per automation run |
 | **Cron** | `opslog-consolidate` — elke nacht 03:00 UTC |
+
+Automations (podcast cron, HN 6h job) do not go through the Hermes hook.
+They log with `run_log.run_log(workflow)`: one opslog row per step, one
+start/end pair in `runs_automation.jsonl`. A step without `ok()`/`fail()`,
+or an exception, is a failure and is re-raised. `run_log.heartbeat()`
+flags missing or unfinished runs. Podcast/cron wrappers are a follow-up.
 
 ### Task-ID conventies
 
