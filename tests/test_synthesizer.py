@@ -46,6 +46,27 @@ def test_synthesize_builds_dag_from_template():
     assert dag.distance_from_end("publish") == 0
 
 
+def test_synthesize_stable_ids_without_uuid():
+    syn = WorkflowSynthesizer()
+    a = syn.synthesize("Scrape contacts", template="scrape_extract_store",
+                       skill_id="scrape-contacts", skill_version="1.2.0")
+    b = syn.synthesize("Scrape contacts", template="scrape_extract_store",
+                       skill_id="scrape-contacts", skill_version="1.2.0")
+    assert a.id == b.id == "scrape-contacts-v1.2.0"
+    assert a.nodes["research"].task_id == "research-scrape-contacts-v1.2.0"
+    assert a.nodes["store"].task_id == "store-scrape-contacts-v1.2.0"
+    assert a.nodes["research"].task_id == b.nodes["research"].task_id
+    assert "publish" not in a.nodes
+    assert set(a.nodes) == {"research", "extract", "store"}
+
+
+def test_scrape_template_does_not_publish():
+    _, nodes, edges = WORKFLOW_TEMPLATES["scrape_extract_store"]
+    assert nodes == ["research", "extract", "store"]
+    assert "publish" not in nodes
+    assert ("extract", "store") in edges
+
+
 def test_synthesize_explicit_unknown_template_falls_back():
     syn = WorkflowSynthesizer()
     dag = syn.synthesize("totally unrelated xyz", template="does_not_exist")

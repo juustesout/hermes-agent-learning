@@ -362,9 +362,14 @@ def podcast_execute(node: WorkflowNode, action_id: str, context: Dict[str, Any])
 
     # Check voor partial failures
     fail_rate = context.get("fail_rate", 0.0)
-    if fail_rate > 0 and hash(f"{context.get('run_seed','')}:{node.id}") % 100 < fail_rate * 100:
-        time.sleep(delay * 0.5)
-        return _finish("failed", f"Willekeurige fout in {node.id}", {"random_failure": True})
+    if fail_rate > 0:
+        seed_s = f"{context.get('run_seed', '')}:{node.id}"
+        roll = 0
+        for ch in seed_s:
+            roll = (roll * 31 + ord(ch)) & 0xFFFFFFFF
+        if (roll % 100) < fail_rate * 100:
+            time.sleep(delay * 0.5)
+            return _finish("failed", f"Willekeurige fout in {node.id}", {"random_failure": True})
 
     time.sleep(min(delay, 1.0))  # cap simulated delay for testing
 

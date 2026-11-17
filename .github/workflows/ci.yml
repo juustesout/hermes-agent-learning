@@ -41,3 +41,34 @@ jobs:
 
       - name: Syntax check
         run: python -m compileall -q .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Pytest
+        run: python -m pytest tests/ -q --tb=short
+
+      - name: Holdout baseline
+        run: python holdout_eval.py --baseline-only --json
+
+      - name: Adaptive benchmark (fixed seeds)
+        run: python test_adaptive_vs_standard.py

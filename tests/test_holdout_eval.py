@@ -69,6 +69,9 @@ def test_print_comparison_includes_delta():
     text = ev.print_comparison(learned, baseline)
     assert "Accuracy" in text
     assert "Delta accuracy" in text
+    assert "  80.0%" in text
+    assert "0.0 %" not in text
+    assert "% 50.0%" not in text
 
 
 def test_evaluate_learned_missing_policy():

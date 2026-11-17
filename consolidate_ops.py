@@ -102,14 +102,16 @@ def op_to_episode(op: dict) -> dict:
         "task_name": None,
         "user_input": "",
         "assistant_output": op.get("result_summary", ""),
-        "intent_summary": f"{action_id} → {op.get('target', '')}",
+        "intent_summary": f"{action_id} → {op.get('target', '') or 'no-target'}",
         "action_type": ACTION_TYPE_MAP.get(op.get("action_type", ""), op.get("action_type", "")),
         "action_name": action_id,
         "target": op.get("target", ""),
         "input_summary": f"Auto-logged: {task_id}",
         "expected_outcome": "Operation completed via Hermes tool call",
         "execution_status": op.get("execution_status", "completed"),
-        "result_summary": op.get("result_summary", ""),
+        "result_summary": op.get("result_summary") or (
+            "failed" if op.get("execution_status") == "failed" else "completed"
+        ),
         "system_message": None,
         "conversation_history": [],
         "tool_calls": [],
