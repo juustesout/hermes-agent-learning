@@ -24,6 +24,23 @@ def _patch_store(monkeypatch, tmp_path):
     return store
 
 
+def test_op_to_episode_fills_full_fields_on_failure():
+    ep = consolidate_ops.op_to_episode({
+        "id": "fail-1",
+        "task_id": "choose-scrape-strategy",
+        "action_id": "use_jina_reader",
+        "target": "",
+        "execution_status": "failed",
+        "result_summary": "",
+        "action_type": "web_scrape",
+    })
+    assert ep["intent_summary"] == "use_jina_reader → no-target"
+    assert ep["expected_outcome"]
+    assert ep["result_summary"] == "failed"
+    assert ep["action_name"] == "use_jina_reader"
+    assert ep["execution_status"] == "failed"
+
+
 def test_op_to_episode_round_trip_fields():
     op = {
         "id": "abc",

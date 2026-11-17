@@ -152,6 +152,22 @@ def test_choose_returns_known_action():
     assert decision.logprob <= 0.0
 
 
+def test_choose_logprob_is_normalized_mean_not_raw_mean():
+    import math
+
+    p = ThompsonPolicy.from_actions(
+        [Action(id="a"), Action(id="b"), Action(id="c")],
+        agent_id="t",
+        task_id="t",
+        rng=__import__("random").Random(1),
+    )
+    decision = p.choose()
+    # Uniform Beta(1,1) mean is 0.5 per arm; raw mean would be log(0.5).
+    # Normalized P(chosen) is 1/3.
+    assert decision.logprob == pytest.approx(math.log(1.0 / 3.0))
+    assert math.exp(decision.logprob) == pytest.approx(1.0 / 3.0)
+
+
 def test_learner_rejects_non_thompson_policy():
     l = ThompsonLearner()
     with pytest.raises(TypeError):

@@ -356,8 +356,8 @@ class HoldoutEvaluator:
             "",
             f"{'Metric':<25} {'Learned':<20} {'Baseline':<20}",
             f"{'─'*25} {'─'*20} {'─'*20}",
-            f"{'Accuracy':<25} {learned.accuracy*100:<19.1f}% {baseline.accuracy*100:.1f}%",
-            f"{'Correct':<25} {learned.correct}/{learned.total:<14} {baseline.correct}/{baseline.total}",
+            f"{'Accuracy':<25} {learned.accuracy*100:>6.1f}%            {baseline.accuracy*100:>6.1f}%",
+            f"{'Correct':<25} {learned.correct}/{learned.total:<16} {baseline.correct}/{baseline.total}",
             f"{'Total cost':<25} {learned.total_cost:<19.1f} {baseline.total_cost:.1f}",
             f"{'Avg latency':<25} {learned.avg_latency:<19.1f}s {baseline.avg_latency:.1f}s",
         ]
@@ -391,7 +391,22 @@ def main() -> int:
                         help="Output as JSON")
     parser.add_argument("--store-results", action="store_true",
                         help="Save results to store/eval/ for trend tracking")
+    parser.add_argument("--baseline-only", action="store_true",
+                        help="Skip learned policy; evaluate the baseline only")
     args = parser.parse_args()
+
+    evaluator = HoldoutEvaluator()
+    baseline = evaluator.evaluate_baseline(args.baseline)
+
+    if args.baseline_only:
+        if args.json:
+            print(json.dumps({
+                "baseline": baseline.to_dict(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }, indent=2))
+        else:
+            print(baseline.summary())
+        return 0
 
     try:
         from agent_learning.storage.cosmos import get_default_store
@@ -400,11 +415,7 @@ def main() -> int:
         print(f"Store not available: {exc}")
         return 1
 
-    evaluator = HoldoutEvaluator()
-
-    # Evaluate
     learned = evaluator.evaluate_learned(store)
-    baseline = evaluator.evaluate_baseline(args.baseline)
 
     if args.json:
         print(json.dumps({

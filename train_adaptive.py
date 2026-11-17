@@ -75,7 +75,7 @@ def main() -> int:
 
     selected_episodes = store.query_episodes(
         args.agent_id, task_id=args.task_id, limit=args.limit,
-        start_date=args.start_date, end_date=args.end_date, full_only=True,
+        start_date=args.start_date, end_date=args.end_date, full_only=False,
     )
     episode_limits = Counter(ep.task_id for ep in selected_episodes)
     results = []
