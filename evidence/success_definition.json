@@ -1,10 +1,14 @@
 {
-  "version": "2026-11-17.1",
+  "version": "2026-11-17.2",
   "effective_from": "2026-11-17",
   "changelog": [
     {
       "date": "2026-11-17",
       "reason": "Initial freeze for the HN aidevforum evidence run"
+    },
+    {
+      "date": "2026-11-17",
+      "reason": "Option 1: per-item coin flip, p_learned=0.5, salt hn-aidevforum-2026-11-17.2. Arm and choice_prob live in assignments.jsonl only."
     }
   ],
   "workflows": {
@@ -14,6 +18,14 @@
       "posts_per_day": 8,
       "sample_rate": 0.2,
       "agreement_floor": 0.9,
+      "randomization": {
+        "option": 1,
+        "unit": "item",
+        "p_learned": 0.5,
+        "salt": "hn-aidevforum-2026-11-17.2",
+        "log": "assignments.jsonl",
+        "analysis": "two-proportion test with inverse probability weights; no peeking except safety stop"
+      },
       "automatic": {
         "technical_success": "http_2xx",
         "quality_proxy": "auto_relevant",
@@ -28,7 +40,9 @@
         "HTTP 2xx is technical success only.",
         "Blind labels judge relevance for AI development.",
         "A relevance rejection or duplicate is a quality failure.",
-        "Rater must not see arm, policy, rank, or auto scores."
+        "Rater must not see arm, policy, rank, or auto scores.",
+        "Enqueue successful and failed HTTP attempts.",
+        "Daily audit compares job attempts with enqueued items."
       ]
     },
     "podcast-buzzsprout": {

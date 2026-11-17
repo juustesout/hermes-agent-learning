@@ -1,7 +1,9 @@
 """Blind labels for the HN aidevforum evidence run.
 
-Raters see title/url/summary only. Arm, policy, rank, and auto scores stay hidden.
+Raters see title/url/summary only. Arm, policy, rank, and auto scores stay
+in assignments.jsonl, never in the rater card.
 Sampling is a stable 20 percent of posted item ids.
+Assignment is a per-item coin flip (option 1) with a frozen salt.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ import hashlib
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -19,9 +21,14 @@ import env_setup  # noqa: F401
 import opslog
 
 WORKFLOW = "hn-aidevforum"
-SUCCESS_DEFINITION = "2026-11-17.1"
+SUCCESS_DEFINITION = "2026-11-17.2"
 SAMPLE_RATE = 0.2
 AGREEMENT_FLOOR = 0.9
+ASSIGN_SALT = "hn-aidevforum-2026-11-17.2"
+P_LEARNED = 0.5
+ARMS = ("baseline", "learned")
+EXPECTED_POSTS_PER_DAY = 8
+EXPECTED_RUNS_PER_DAY = 4
 HIDDEN_FIELDS = frozenset(
     {
         "arm",
@@ -76,9 +83,26 @@ def quality_success(*, relevant: bool, duplicate: bool) -> bool:
     return bool(relevant) and not bool(duplicate)
 
 
+def _unit(item_id: str, purpose: str) -> float:
+    digest = hashlib.sha256(f"{ASSIGN_SALT}:{purpose}:{item_id}".encode("utf-8")).hexdigest()
+    return (int(digest, 16) % 10000) / 10000.0
+
+
 def should_sample(item_id: str, rate: float = SAMPLE_RATE) -> bool:
-    digest = hashlib.sha256(str(item_id).encode("utf-8")).hexdigest()
-    return (int(digest, 16) % 10000) / 10000.0 < rate
+    return _unit(item_id, "sample") < rate
+
+
+def assign_arm(item_id: str, p_learned: float = P_LEARNED) -> dict:
+    draw = _unit(item_id, "arm")
+    arm = "learned" if draw < p_learned else "baseline"
+    return {
+        "id": item_id,
+        "arm": arm,
+        "p_learned": p_learned,
+        "choice_prob": p_learned if arm == "learned" else 1.0 - p_learned,
+        "draw": draw,
+        "salt": ASSIGN_SALT,
+    }
 
 
 def blind_view(item: dict) -> dict:
@@ -129,8 +153,64 @@ def load_labels() -> list[dict]:
     return _read_jsonl(_path("labels.jsonl"))
 
 
+def load_assignments() -> list[dict]:
+    return _read_jsonl(_path("assignments.jsonl"))
+
+
+def load_health() -> dict:
+    path = _path("health.json")
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def _ids(rows: Iterable[dict]) -> set[str]:
     return {str(row.get("id")) for row in rows if row.get("id")}
+
+
+def public_item(item: dict) -> dict:
+    record = {key: item.get(key, "") for key in VISIBLE_FIELDS if key in item or key in ("id", "title", "url", "summary")}
+    record["id"] = str(item.get("id") or "").strip()
+    record["title"] = str(item.get("title") or "").strip()
+    record["url"] = str(item.get("url") or "").strip()
+    record["summary"] = str(item.get("summary") or "").strip()
+    record["workflow"] = WORKFLOW
+    if item.get("posted_at"):
+        record["posted_at"] = item["posted_at"]
+    if item.get("hn_id"):
+        record["hn_id"] = item["hn_id"]
+    return record
+
+
+def assignment_record(item: dict, assigned: dict) -> dict:
+    http_status = item.get("http_status")
+    try:
+        http_status = int(http_status) if http_status is not None else None
+    except (TypeError, ValueError):
+        http_status = None
+    return {
+        **assigned,
+        "http_status": http_status,
+        "technical_success": technical_success(http_status),
+        "auto_relevant": item.get("auto_relevant"),
+        "auto_duplicate": item.get("auto_duplicate"),
+        "assigned_at": datetime.now(timezone.utc).isoformat(),
+        "success_definition": SUCCESS_DEFINITION,
+        "workflow": WORKFLOW,
+    }
+
+
+def technical_success(http_status: Any) -> Optional[bool]:
+    if http_status is None:
+        return None
+    try:
+        code = int(http_status)
+    except (TypeError, ValueError):
+        return None
+    return 200 <= code < 300
 
 
 def enqueue_item(item: dict) -> dict:
@@ -143,12 +223,19 @@ def enqueue_item(item: dict) -> dict:
         raise ValueError("item.title and item.url are required")
     existing = _ids(load_items())
     if item_id in existing:
-        return {"id": item_id, "enqueued": False, "sampled": item_id in _ids(load_queue())}
-    record = dict(item)
-    record["id"] = item_id
-    record["workflow"] = WORKFLOW
+        assigned = next((row for row in load_assignments() if row.get("id") == item_id), {})
+        return {
+            "id": item_id,
+            "enqueued": False,
+            "sampled": item_id in _ids(load_queue()),
+            "arm": assigned.get("arm"),
+            "choice_prob": assigned.get("choice_prob"),
+        }
+    assigned = assign_arm(item_id)
+    record = public_item(item)
     record.setdefault("posted_at", datetime.now(timezone.utc).isoformat())
     _append_jsonl(_path("items.jsonl"), record)
+    _append_jsonl(_path("assignments.jsonl"), assignment_record(item, assigned))
     sampled = should_sample(item_id)
     if sampled:
         _append_jsonl(
@@ -159,7 +246,14 @@ def enqueue_item(item: dict) -> dict:
                 "success_definition": SUCCESS_DEFINITION,
             },
         )
-    return {"id": item_id, "enqueued": True, "sampled": sampled}
+    return {
+        "id": item_id,
+        "enqueued": True,
+        "sampled": sampled,
+        "arm": assigned["arm"],
+        "choice_prob": assigned["choice_prob"],
+        "http_status": item.get("http_status"),
+    }
 
 
 def unlabeled_queue() -> list[dict]:
@@ -220,49 +314,130 @@ def _latest_labels() -> dict[str, dict]:
     return latest
 
 
-def auto_quality(item: dict) -> bool:
-    if item.get("auto_duplicate") is True:
+def auto_quality(assignment: dict) -> bool:
+    if assignment.get("auto_duplicate") is True:
         return False
-    relevant = item.get("auto_relevant")
+    relevant = assignment.get("auto_relevant")
     if relevant is None:
         return False
     return bool(relevant)
 
 
+def _by_id(rows: Iterable[dict]) -> dict[str, dict]:
+    return {str(row.get("id")): row for row in rows if row.get("id")}
+
+
 def report() -> dict:
     items = load_items()
     queue = load_queue()
+    assignments = _by_id(load_assignments())
     latest = _latest_labels()
     labeled_n = sum(1 for row in queue if row.get("id") in latest)
     remaining = len(queue) - labeled_n
     compared = 0
     agree = 0
     human_ok = 0
+    by_arm = {arm: {"n": 0, "human_ok": 0, "technical_ok": 0} for arm in ARMS}
+    for row in items:
+        assigned = assignments.get(str(row.get("id") or ""), {})
+        arm = assigned.get("arm")
+        if arm in by_arm:
+            by_arm[arm]["n"] += 1
+            if assigned.get("technical_success") is True:
+                by_arm[arm]["technical_ok"] += 1
     for row in queue:
         item_id = str(row.get("id") or "")
         label = latest.get(item_id)
         if not label:
             continue
-        item = next((it for it in items if it.get("id") == item_id), {})
+        assigned = assignments.get(item_id, {})
         compared += 1
         if label.get("quality_success"):
             human_ok += 1
-        if bool(label.get("quality_success")) == auto_quality(item):
+            arm = assigned.get("arm")
+            if arm in by_arm:
+                by_arm[arm]["human_ok"] += 1
+        if bool(label.get("quality_success")) == auto_quality(assigned):
             agree += 1
     agreement = (agree / compared) if compared else None
     return {
         "workflow": WORKFLOW,
         "success_definition": SUCCESS_DEFINITION,
         "posted": len(items),
+        "assignments": len(assignments),
         "sampled": len(queue),
         "labeled": labeled_n,
         "remaining": remaining,
         "sample_rate": SAMPLE_RATE,
+        "p_learned": P_LEARNED,
+        "by_arm": by_arm,
         "human_success_rate": (human_ok / compared) if compared else None,
         "agreement": agreement,
         "agreement_floor": AGREEMENT_FLOOR,
         "automatic_measure_ok": None if agreement is None else agreement >= AGREEMENT_FLOOR,
     }
+
+
+def record_run(*, attempted: int, posted: int, failed: int, run_id: str = "") -> dict:
+    payload = {
+        "run_id": run_id or datetime.now(timezone.utc).isoformat(),
+        "attempted": int(attempted),
+        "posted": int(posted),
+        "failed": int(failed),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "workflow": WORKFLOW,
+    }
+    _append_jsonl(_path("runs.jsonl"), payload)
+    return payload
+
+
+def load_runs() -> list[dict]:
+    return _read_jsonl(_path("runs.jsonl"))
+
+
+def _parse_ts(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def audit(*, expected_posts: int = EXPECTED_POSTS_PER_DAY, hours: int = 24) -> dict:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    items = [row for row in load_items() if (_parse_ts(row.get("posted_at")) or cutoff) >= cutoff]
+    assignments = load_assignments()
+    runs = [row for row in load_runs() if (_parse_ts(row.get("recorded_at")) or cutoff) >= cutoff]
+    attempted = sum(int(row.get("attempted") or 0) for row in runs)
+    posted_runs = sum(int(row.get("posted") or 0) for row in runs)
+    failed_runs = sum(int(row.get("failed") or 0) for row in runs)
+    alarms = []
+    if len(items) != len({row.get("id") for row in items}):
+        alarms.append("duplicate_item_ids")
+    if len(items) != len([row for row in assignments if (_parse_ts(row.get("assigned_at")) or cutoff) >= cutoff]):
+        alarms.append("items_assignments_mismatch")
+    if attempted and posted_runs + failed_runs != attempted:
+        alarms.append("run_counts_inconsistent")
+    if len(items) < expected_posts - 1:
+        alarms.append("posted_below_expected")
+    if attempted and len(items) < attempted:
+        alarms.append("enqueue_lag")
+    payload = {
+        "ok": not alarms,
+        "hours": hours,
+        "expected_posts": expected_posts,
+        "items": len(items),
+        "assignments": len(assignments),
+        "runs": len(runs),
+        "attempted": attempted,
+        "posted_runs": posted_runs,
+        "failed_runs": failed_runs,
+        "alarms": alarms,
+        "success_definition": SUCCESS_DEFINITION,
+    }
+    _path("health.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return payload
 
 
 def _print_card(card: dict) -> None:
@@ -282,14 +457,24 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="blind_label")
     sub = parser.add_subparsers(dest="cmd")
 
-    p_en = sub.add_parser("enqueue", help="Add a posted HN item")
+    p_en = sub.add_parser("enqueue", help="Add a posted or failed HN item")
     p_en.add_argument("--json", required=True, help="Posted item as JSON object")
 
     p_imp = sub.add_parser("import-jsonl", help="Bulk enqueue posted items")
     p_imp.add_argument("path")
 
+    p_as = sub.add_parser("assign", help="Show coin-flip arm for an item id")
+    p_as.add_argument("--id", required=True)
+
+    p_run = sub.add_parser("record-run", help="Record a 6h job attempt count")
+    p_run.add_argument("--attempted", type=int, required=True)
+    p_run.add_argument("--posted", type=int, required=True)
+    p_run.add_argument("--failed", type=int, required=True)
+    p_run.add_argument("--run-id", default="")
+
     sub.add_parser("next", help="Show the next unlabeled blind card")
     sub.add_parser("report", help="Sample progress and rater/auto agreement")
+    sub.add_parser("audit", help="Compare posted vs enqueued vs expected")
 
     p_lab = sub.add_parser("label", help="Record a blind label")
     p_lab.add_argument("--id", required=True)
@@ -336,6 +521,24 @@ def main(argv=None) -> int:
     if args.cmd == "report":
         print(json.dumps(report(), indent=2))
         return 0
+    if args.cmd == "assign":
+        print(json.dumps(assign_arm(args.id), indent=2))
+        return 0
+    if args.cmd == "record-run":
+        print(json.dumps(
+            record_run(
+                attempted=args.attempted,
+                posted=args.posted,
+                failed=args.failed,
+                run_id=args.run_id,
+            ),
+            indent=2,
+        ))
+        return 0
+    if args.cmd == "audit":
+        payload = audit()
+        print(json.dumps(payload, indent=2))
+        return 0 if payload["ok"] else 2
     parser.print_help()
     return 0
 
