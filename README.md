@@ -130,7 +130,9 @@ contain untrusted values (for example custom `action_id` strings).
 │
 ├── graph_evolution.py         # DagRegistry, MultiDagOrch, GraphOptimizer, Dashboard
 ├── skill_pack.py              # Export/import shareable workflow.json packs
-├── schema/workflow.schema.json
+├── skill_schema/              # Versioned JSON Schema + stdlib validator
+│                              #   (workflow, node, episode, reward, case)
+├── schema/workflow.schema.json  # compat alias → skill_schema/schemas/skill.schema.json
 │
 ├── cron_workflow.sh           # Daily cron: train + run + dashboard
 ├── train_scrape_policy.sh     # Every-6h cron: scrape policy training

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skill-schema.local/v1.0.0/case.schema.json",
+  "title": "Labeled skill case",
+  "description": "Shareable holdout/example row. No raw episodes or policy snapshots.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["name", "correct_action"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "correct_action": { "type": "string", "minLength": 1 },
+    "features": { "type": "object" },
+    "category": { "type": "string" },
+    "context": { "type": "object" }
+  }
+}

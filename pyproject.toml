@@ -19,8 +19,11 @@ dev = ["pytest>=8"]
 [project.urls]
 repository = "https://github.com/hermes-ai/hermes-agent-learning"
 
-[tool.setuptools.packages.find]
-include = ["agent_learning*"]
+[tool.setuptools]
+packages = ["skill_schema"]
+
+[tool.setuptools.package-data]
+skill_schema = ["schemas/*.json"]
 
 [tool.bandit]
 exclude_dirs = ["store", "dashboard", "tests"]

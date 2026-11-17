@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -23,11 +22,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 sys.path.insert(0, os.path.dirname(__file__))
 import env_setup  # noqa: F401
 
+from skill_schema import SCHEMA_VERSION, SchemaError, validate
 from workflow_dag import WorkflowDAG
 from workflow_synthesizer import WorkflowSynthesizer, _slugify
-
-SCHEMA_VERSION = "1.0.0"
-SKILL_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class SkillPackError(ValueError):
@@ -37,6 +34,13 @@ class SkillPackError(ValueError):
 def _require(cond: bool, msg: str) -> None:
     if not cond:
         raise SkillPackError(msg)
+
+
+def _schema(instance: Any, kind: str) -> None:
+    try:
+        validate(instance, kind)
+    except SchemaError as exc:
+        raise SkillPackError(str(exc)) from exc
 
 
 def dag_to_workflow_json(
@@ -68,49 +72,16 @@ def workflow_json_to_dag(payload: Dict[str, Any]) -> WorkflowDAG:
 
 
 def validate_workflow_payload(payload: Dict[str, Any]) -> None:
-    _require(isinstance(payload, dict), "workflow.json must be an object")
-    _require(
-        payload.get("schema_version") == SCHEMA_VERSION,
-        f"schema_version must be {SCHEMA_VERSION}",
-    )
-    skill_id = payload.get("skill_id")
-    _require(isinstance(skill_id, str) and SKILL_ID_RE.match(skill_id),
-             "skill_id must be a kebab-case slug")
-    _require(isinstance(payload.get("skill_version"), str)
-             and payload["skill_version"],
-             "skill_version is required")
-    wf = payload.get("workflow")
-    _require(isinstance(wf, dict), "workflow is required")
-    _require(isinstance(wf.get("id"), str) and wf["id"], "workflow.id required")
-    _require(isinstance(wf.get("name"), str), "workflow.name required")
-    nodes = wf.get("nodes")
-    _require(isinstance(nodes, list) and nodes, "workflow.nodes must be non-empty")
-    node_ids = set()
-    for node in nodes:
-        _require(isinstance(node, dict), "node must be an object")
-        _require(isinstance(node.get("id"), str) and node["id"], "node.id required")
-        _require(isinstance(node.get("task_id"), str) and node["task_id"],
-                 "node.task_id required")
-        _require(isinstance(node.get("action_ids"), list) and node["action_ids"],
-                 "node.action_ids must be non-empty")
-        node_ids.add(node["id"])
-    edges = wf.get("edges", [])
-    _require(isinstance(edges, list), "workflow.edges must be a list")
-    for edge in edges:
-        _require(isinstance(edge, dict), "edge must be an object")
-        _require(edge.get("source") in node_ids, f"unknown edge source {edge.get('source')!r}")
-        _require(edge.get("target") in node_ids, f"unknown edge target {edge.get('target')!r}")
+    _schema(payload, "skill")
 
 
 def validate_cases(cases: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for i, case in enumerate(cases):
-        _require(isinstance(case, dict), f"cases.jsonl line {i}: not an object")
-        _require("name" in case and "correct_action" in case,
-                 f"cases.jsonl line {i}: name and correct_action required")
-        banned = {"episode", "policy", "user_input", "conversation_history"}
-        _require(not (banned & set(case)),
-                 f"cases.jsonl line {i}: raw policy/episode fields are not allowed")
+        try:
+            validate(case, "case")
+        except SchemaError as exc:
+            raise SkillPackError(f"cases.jsonl line {i}: {exc}") from exc
         out.append(case)
     return out
 
