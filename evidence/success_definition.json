@@ -13,6 +13,10 @@
     {
       "date": "2026-11-17",
       "reason": "Slot-level coin flip. A run draws one arm per posting slot from the same remaining pool. Arms are L (ranker) and B (baseline). Analysis is intention-to-treat on slots. Sample hash salt stays hn-aidevforum-2026-11-17.2."
+    },
+    {
+      "date": "2026-11-17",
+      "reason": "Primary lift claim stays intention-to-treat on all posted slots. n_contrast (L != B) and the contrast-subset effect are explanatory only. ITT difference is about contrast_rate times the contrast-subset effect. Salt unchanged."
     }
   ],
   "workflows": {
@@ -31,7 +35,10 @@
         "salt": "hn-aidevforum-2026-11-17.3",
         "sample_salt": "hn-aidevforum-2026-11-17.2",
         "log": "assignments.jsonl",
-        "analysis": "intention-to-treat two-proportion test on slots; p=0.5 so weights are equal; no peeking except safety stop"
+        "analysis": "intention-to-treat two-proportion test on all posted slots; p=0.5 so weights are equal; no peeking except safety stop",
+        "primary_claim": "itt_all_posted_slots",
+        "explanatory": "n_contrast and effect within L != B decisions; not a substitute for the ITT claim",
+        "dilution": "itt_effect ≈ contrast_rate × contrast_subset_effect; with contrast_rate 0.48 a 10pp ITT lift needs about 21pp in the contrast subset"
       },
       "ranker": {
         "file": "hn_ranker.py",
@@ -58,7 +65,9 @@
         "Enqueue successful and failed HTTP attempts.",
         "Daily audit compares job attempts with enqueued items.",
         "A posted item without a prior decision record is an audit alarm.",
-        "Both arms choose from the same RAG-filtered, de-duplicated pool."
+        "Both arms choose from the same RAG-filtered, de-duplicated pool.",
+        "Primary claim is ITT on all posted slots. n_contrast explains where any ITT difference comes from.",
+        "Sim n_contrast and sim contrast-subset effects are mechanics, not quality evidence."
       ]
     },
     "podcast-buzzsprout": {

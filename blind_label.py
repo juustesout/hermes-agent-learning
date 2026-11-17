@@ -165,6 +165,8 @@ def overlap_stats(decisions: list[dict]) -> dict:
         "n_contrast": n_contrast,
         "rate": (same / n) if n else None,
         "contrast_rate": (n_contrast / n) if n else None,
+        "primary_claim": "itt_all_posted",
+        "explanatory": "n_contrast",
     }
 
 
@@ -691,6 +693,8 @@ def selection_overlap(decisions: Iterable[dict]) -> dict:
         "learned_same": learned_same,
         "learned_n_contrast": learned_contrast,
         "learned_rate": (learned_same / learned_n) if learned_n else None,
+        "primary_claim": "itt_all_posted",
+        "explanatory": "n_contrast",
     }
 
 

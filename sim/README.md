@@ -18,6 +18,8 @@ Covered:
 - 200 accelerated ranker jobs: every post has a decision record.
 
 Sim rows are tagged `source=sim`. Training, live `report`, and agreement
-ignore them. Audit still reports L/B overlap and arm balance.
+ignore them. Audit still reports L/B overlap, `n_contrast`, and arm balance.
+Primary claim remains ITT on all posted slots; `n_contrast` is explanatory.
+Sim contrast-subset effects are not quality evidence.
 
 Not covered: whether the content is effective. That needs real labels on real posts.

@@ -311,8 +311,13 @@ pytest -q tests/test_wp_mock.py tests/test_hn_sim.py
 
 This checks select → draft POST → enqueue → record-run → audit. It does not
 measure whether the content is good. Sim rows are tagged `source=sim`.
-`report` and ranker training ignore them. Audit reports L/B overlap and a
-binomial arm-balance check.
+`report` and ranker training ignore them. Audit reports L/B overlap,
+`n_contrast` (slots where L != B), and a binomial arm-balance check.
+
+The primary lift claim is intention-to-treat on all posted slots. `n_contrast`
+and the contrast-subset effect are explanatory: ITT difference is about
+`contrast_rate` times the effect where L and B actually differ. Sim contrast
+numbers are still not quality evidence.
 
 ## CI (GitHub Actions)
 

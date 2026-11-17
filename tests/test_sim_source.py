@@ -80,6 +80,8 @@ def test_overlap_and_balance_stats():
         "n_contrast": 1,
         "rate": 0.5,
         "contrast_rate": 0.5,
+        "primary_claim": "itt_all_posted",
+        "explanatory": "n_contrast",
     }
     assert bl.balance_stats(["L", "L", "B", "B"])["p_value"] == pytest.approx(1.0)
     assert bl.balance_stats(["L"] * 30 + ["B"] * 10)["p_value"] < 0.01
