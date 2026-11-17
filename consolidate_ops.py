@@ -22,8 +22,9 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 import env_setup  # noqa: F401 — ensures LocalFileStore backend
+import opslog
 
-STORE_DIR = "/opt/data/profiles/operator/agent-learning/store"
+STORE_DIR = opslog.default_store_dir()
 OPSLOG_PATH = os.path.join(STORE_DIR, "operations.jsonl")
 CONSOLIDATED_LOG = os.path.join(STORE_DIR, "consolidated.txt")
 EPISODES_DIR = os.path.join(STORE_DIR, "episodes", "hermes")

@@ -3,21 +3,23 @@ name = "hermes-agent-learning"
 version = "0.2.0"
 description = "Self-learning agent: contextual bandits, workflow credit assignment, and graph evolution"
 authors = [
-    {name = "Hermes AI", email = "hermes@nousresearch.com"},
+    {name = "juustesout"},
 ]
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "agent-learning>=0.10.0",
-    "numpy>=1.24",
+    "agent-learning>=0.10.0,<0.11",
+    "numpy>=1.24,<3",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
 [project.urls]
-repository = "https://github.com/hermes-ai/hermes-agent-learning"
+Homepage = "https://github.com/juustesout/hermes-agent-learning"
+Repository = "https://github.com/juustesout/hermes-agent-learning"
+Issues = "https://github.com/juustesout/hermes-agent-learning/issues"
 
 [tool.setuptools]
 packages = ["skill_schema"]

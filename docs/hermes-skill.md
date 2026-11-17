@@ -145,20 +145,16 @@ Tool-operaties worden automatisch gelogd via de **Hermes plugin**
 (`hermes_plugin/__init__.py`). De `post_tool_call` hook roept `opslog.log_operation()`
 aan voor elke Hermes tool-call — geen handmatige logging nodig.
 
-- **Plugin:** `hermes_plugin/` — geïnstalleerd via `hermes plugins install juustesout/hermes-agent-learning --enable`
-- **Live log:** `store/operations.jsonl` (append-only JSONL)
+- **Plugin:** repo-root `plugin.yaml` + `__init__.py` (implementation in `hermes_plugin/`)
+- **Install:** `hermes plugins install juustesout/hermes-agent-learning --enable`
+- **Live log:** `store/operations.jsonl` (append-only JSONL, path via `AGENT_LEARNING_OPSLOG_DIR` or `AGENT_LEARNING_LOCAL_STORE_DIR`)
 - **Consolidatie:** `consolidate_ops.py --run` zet ruwe logs om in episodes + rewards
 - **Cron:** `opslog-consolidate` elke nacht 03:00 UTC (no_agent script)
+- **Opt-out:** `AGENT_LEARNING_OPSLOG_ENABLED=0`
+- **Health:** `hermes agent-learning health` / `python3 opslog.py health`
 
-> **Let op:** `hermes plugins install ./hermes_plugin` (lokaal pad) werkt niet —
-> Hermes accepteert alleen Git URLs. Na installatie moeten `plugin.yaml` en
-> `__init__.py` als symlink in de root van de plugin directory staan, omdat ze
-> in de `hermes_plugin/` subdirectory zitten:
-> ```bash
-> cd /opt/data/profiles/operator/plugins/hermes-agent-learning
-> ln -sf hermes_plugin/plugin.yaml plugin.yaml
-> ln -sf hermes_plugin/__init__.py __init__.py
-> ```
+> Local checkout: `hermes plugins install . --enable` then `hermes plugins doctor . --ci`.
+> No symlinks. Query strings and common secrets are redacted; session ids are off by default.
 
 ### Task-ID conventies
 | Prefix | Voorbeelden |
@@ -172,9 +168,8 @@ aan voor elke Hermes tool-call — geen handmatige logging nodig.
 ## Sessie-start
 
 ```bash
-export PATH="/opt/hermes/.venv/bin:$PATH"
 export AGENT_LEARNING_STORE_BACKEND=local
-export AGENT_LEARNING_LOCAL_STORE_DIR=/opt/data/profiles/operator/agent-learning/store
+export AGENT_LEARNING_LOCAL_STORE_DIR="${AGENT_LEARNING_LOCAL_STORE_DIR:-$PWD/store}"
 ```
 
 ---

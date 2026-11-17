@@ -1,0 +1,32 @@
+name: agent-learning
+label: Agent Learning
+kind: standalone
+version: 0.2.0
+manifest_version: 2
+api_version: 1
+author: juustesout
+homepage: https://github.com/juustesout/hermes-agent-learning
+license: MIT
+description: >
+  Thin Hermes observer that appends tool-call outcomes to agent-learning
+  operations.jsonl. The learning kernel stays Hermes-free.
+tags: [learning, observability, opslog]
+provides_hooks:
+  - post_tool_call
+config_schema:
+  opslog_dir:
+    type: str
+    default: ""
+    description: Store directory override. Prefer AGENT_LEARNING_OPSLOG_DIR.
+  tool_task_map:
+    type: str
+    default: ""
+    description: JSON object mapping Hermes tool names to task_id values.
+  retention_days:
+    type: int
+    default: 30
+    description: Drop operations older than N days. 0 disables pruning.
+  log_session_ids:
+    type: bool
+    default: false
+    description: Store Hermes session/turn ids. Off by default.
