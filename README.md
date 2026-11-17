@@ -133,6 +133,7 @@ contain untrusted values (for example custom `action_id` strings).
 ├── skill_schema/              # Versioned JSON Schema + stdlib validator
 │                              #   (workflow, node, episode, reward, case)
 ├── schema/workflow.schema.json  # compat alias → skill_schema/schemas/skill.schema.json
+├── hermes_plugin/             # Optional Hermes observer (plugin.yaml + register)
 │
 ├── cron_workflow.sh           # Daily cron: train + run + dashboard
 ├── train_scrape_policy.sh     # Every-6h cron: scrape policy training
@@ -225,6 +226,27 @@ als basis en accepteren overrides via environment variables:
 
 - `AGENT_LEARNING_LOCAL_STORE_DIR` (default: `<repo>/store`)
 - `DASHBOARD_DIR` (default: `<repo>/dashboard`, alleen `cron_workflow.sh`)
+
+## Hermes plugin (optional)
+
+`hermes_plugin/` is a thin observer. It does not change the learning kernel.
+
+```bash
+# From this checkout (Hermes copies the plugin directory)
+hermes plugins install ./hermes_plugin
+hermes plugins enable agent-learning
+hermes plugins doctor ./hermes_plugin --ci
+```
+
+Keep this repository importable (`PYTHONPATH=<repo>`, `AGENT_LEARNING_REPO=<repo>`, or `pip install -e .`) so the hook can call `opslog.log_operation`. If `opslog` is missing, the hook is a no-op.
+
+`post_tool_call` maps Hermes tool outcomes onto `operations.jsonl`. Callbacks accept `**kwargs` and fail open.
+
+```bash
+hermes agent-learning stats
+hermes agent-learning count
+hermes agent-learning tail -n 20
+```
 
 ## CI (GitHub Actions)
 
