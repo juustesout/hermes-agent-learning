@@ -172,13 +172,17 @@ Baseline = eerste twee overgebleven relevante items in bronvolgorde na harde ded
 HTTP 2xx is technisch succes; kwaliteit = blinde labels.
 
 ```bash
-python3 blind_label.py enqueue --json '{"id":"...","title":"...","url":"...","summary":"..."}'
+python3 blind_label.py assign --id ...
+python3 blind_label.py enqueue --json '{"id":"...","title":"...","url":"...","summary":"...","http_status":201}'
+python3 blind_label.py record-run --attempted 2 --posted 2 --failed 0
 python3 blind_label.py next
 python3 blind_label.py label --id ... --relevant yes --duplicate no --needs-correction no
 python3 blind_label.py report
+python3 blind_label.py audit
 ```
 
-Rater ziet geen arm/policy/rank/auto-score. Sample = 20 procent, stabiele hash.
+Rater ziet geen arm/policy/rank/auto-score. Arm staat in `assignments.jsonl`.
+Munt-worp per item, p=0.5. Sample = 20 procent, stabiele hash.
 
 ## Sessie-start
 

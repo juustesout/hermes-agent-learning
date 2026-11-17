@@ -271,16 +271,26 @@ Frozen before measurement: `evidence/success_definition.json` and
 `evidence/hn_baseline.json`. Baseline = first two remaining relevant items in
 source order after hard dedupe. HTTP 2xx is technical success only.
 
-The 6-hour HN job should enqueue each posted item (id, title, url, summary).
-Keep arm/policy/rank/auto scores in the same JSON if you have them; the rater
-never sees those fields.
+Randomization (option 1): before posting, flip a coin per item id.
 
 ```bash
-python3 blind_label.py enqueue --json '{"id":"hn-1","title":"...","url":"...","summary":"..."}'
+python3 blind_label.py assign --id hn-1
+```
+
+`arm` is `learned` or `baseline` with `p_learned=0.5`. Follow that arm. After the
+HTTP attempt, enqueue even on non-2xx:
+
+```bash
+python3 blind_label.py enqueue --json '{"id":"hn-1","title":"...","url":"...","summary":"...","http_status":201,"auto_relevant":true}'
+python3 blind_label.py record-run --attempted 2 --posted 2 --failed 0 --run-id 2026-11-17T12
 python3 blind_label.py next
 python3 blind_label.py label --id hn-1 --relevant yes --duplicate no --needs-correction no
 python3 blind_label.py report
+python3 blind_label.py audit
 ```
+
+`items.jsonl` is rater-safe. `assignments.jsonl` holds arm, choice_prob, and
+HTTP status. `audit` exits 2 if today's posts lag the 6h job.
 
 About 20 percent of posts are sampled (stable hash, ~11 labels/week at 8 posts/day).
 If rater/auto agreement drops below 90 percent, revise the automatic quality

@@ -96,11 +96,14 @@ def test_cli_next_and_label(tmp_path, monkeypatch, capsys):
         json.dumps(_item("cli-1", arm="baseline")),
     ])
     assert rc == 0
+    enq = json.loads(capsys.readouterr().out)
+    assert enq["arm"] in {"baseline", "learned"}
     assert blind_label.main(["next"]) == 0
     out = capsys.readouterr().out
     assert "cli-1" in out
-    assert "baseline" not in out
     assert "arm" not in out
+    assert "learned" not in out
+    assert "baseline" not in out
     assert blind_label.main([
         "label",
         "--id", "cli-1",
@@ -119,3 +122,54 @@ def test_quality_success():
     assert blind_label.quality_success(relevant=True, duplicate=False) is True
     assert blind_label.quality_success(relevant=True, duplicate=True) is False
     assert blind_label.quality_success(relevant=False, duplicate=False) is False
+
+
+def test_assign_arm_is_stable_and_balanced():
+    first = [blind_label.assign_arm(f"id-{i}")["arm"] for i in range(200)]
+    second = [blind_label.assign_arm(f"id-{i}")["arm"] for i in range(200)]
+    assert first == second
+    learned = first.count("learned")
+    assert 70 <= learned <= 130
+    row = blind_label.assign_arm("id-1")
+    assert row["choice_prob"] == 0.5
+    assert row["p_learned"] == 0.5
+
+
+def test_enqueue_splits_assignment_log(tmp_path, monkeypatch):
+    evidence = _isolate(tmp_path, monkeypatch)
+    result = blind_label.enqueue_item(_item("split-1", http_status=201, arm="learned"))
+    items = json.loads((evidence / "items.jsonl").read_text().splitlines()[0])
+    assigned = json.loads((evidence / "assignments.jsonl").read_text().splitlines()[0])
+    assert "arm" not in items
+    assert "choice_prob" not in items
+    assert "http_status" not in items
+    assert assigned["id"] == "split-1"
+    assert assigned["arm"] in {"baseline", "learned"}
+    assert assigned["http_status"] == 201
+    assert assigned["technical_success"] is True
+    assert result["arm"] == assigned["arm"]
+    card = blind_label.blind_view(items)
+    assert "arm" not in card
+    dumped = json.dumps(card)
+    assert "learned" not in dumped
+    assert "baseline" not in dumped
+
+
+def test_enqueue_failed_http(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    result = blind_label.enqueue_item(_item("fail-1", http_status=500, auto_relevant=False))
+    assert result["enqueued"] is True
+    assigned = blind_label.load_assignments()[0]
+    assert assigned["technical_success"] is False
+    assert assigned["http_status"] == 500
+
+
+def test_audit_detects_enqueue_lag(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    blind_label.enqueue_item(_item("only-1", http_status=201))
+    blind_label.record_run(attempted=2, posted=2, failed=0, run_id="r1")
+    payload = blind_label.audit(expected_posts=8, hours=24)
+    assert payload["ok"] is False
+    assert "posted_below_expected" in payload["alarms"]
+    assert "enqueue_lag" in payload["alarms"]
+    assert blind_label.main(["audit"]) == 2
