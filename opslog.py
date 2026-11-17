@@ -11,18 +11,227 @@ Gebruik (Python):
   log_operation(task_id="choose-scrape-strategy", action_id="use_webclaw_scrape", ...)
 """
 
-import json
-import uuid
-import os
-from datetime import datetime, timezone
-from typing import Optional
+from __future__ import annotations
 
-STORE_DIR = "/opt/data/profiles/operator/agent-learning/store"
+import json
+import os
+import re
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
+
+_REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+_SECRET_KV_RE = re.compile(
+    r"(?i)(api[_-]?key|token|password|secret|passwd|authorization|access[_-]?key)"
+    r"\s*[=:]\s*([^\s&\"']+)"
+)
+_BEARER_RE = re.compile(r"(?i)\b(bearer\s+)[a-z0-9._\-+=/]+")
+_KEYISH_RE = re.compile(
+    r"\b(sk-[a-zA-Z0-9]{8,}|ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{20,}"
+    r"|glpat-[a-zA-Z0-9_\-]{10,}|xox[baprs]-[a-zA-Z0-9-]{10,})\b"
+)
+
+
+def _env_path(name: str) -> str:
+    return os.environ.get(name, "").strip()
+
+
+def default_store_dir() -> str:
+    for key in ("AGENT_LEARNING_OPSLOG_DIR", "AGENT_LEARNING_LOCAL_STORE_DIR"):
+        value = _env_path(key)
+        if value:
+            return value
+    return os.path.join(_REPO_ROOT, "store")
+
+
+def retention_days() -> int:
+    raw = os.environ.get("AGENT_LEARNING_OPSLOG_RETENTION_DAYS", "30").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return 30
+
+
+STORE_DIR = default_store_dir()
 OPSLOG_PATH = os.path.join(STORE_DIR, "operations.jsonl")
+
+
+def health_path() -> str:
+    return os.path.join(STORE_DIR, "opslog-health.json")
 
 
 def _ensure_store():
     os.makedirs(STORE_DIR, exist_ok=True)
+
+
+def redact_text(value: str) -> str:
+    text = str(value or "")
+    text = _SECRET_KV_RE.sub(lambda m: f"{m.group(1)}=***", text)
+    text = _BEARER_RE.sub(r"\1***", text)
+    text = _KEYISH_RE.sub("***", text)
+    return text
+
+
+def redact_target(target: str) -> str:
+    text = str(target or "").strip()
+    if not text:
+        return ""
+    if "://" in text or "?" in text or "#" in text:
+        try:
+            parts = urlsplit(text)
+            if parts.scheme or parts.query or parts.fragment:
+                text = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        except ValueError:
+            text = text.split("?", 1)[0].split("#", 1)[0]
+    return redact_text(text)
+
+
+def _parse_ts(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _with_lock(path: str, fn):
+    lock_path = path + ".lock"
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(lock_path, "a+", encoding="utf-8") as lockf:
+        if os.name == "nt":
+            import msvcrt
+
+            lockf.seek(0)
+            lockf.write("0")
+            lockf.flush()
+            lockf.seek(0)
+            msvcrt.locking(lockf.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                return fn()
+            finally:
+                lockf.seek(0)
+                msvcrt.locking(lockf.fileno(), msvcrt.LK_UNLCK, 1)
+        import fcntl
+
+        fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
+        try:
+            return fn()
+        finally:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+
+
+def record_health(*, ok: bool, error: str = "", extra: Optional[dict] = None) -> None:
+    path = health_path()
+
+    def _write():
+        current = {
+            "ok": True,
+            "written": 0,
+            "failed": 0,
+            "last_error": "",
+            "last_error_at": None,
+            "last_write_at": None,
+            "path": OPSLOG_PATH,
+        }
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    current.update(loaded)
+            except (OSError, json.JSONDecodeError):
+                pass
+        now = datetime.now(timezone.utc).isoformat()
+        if ok:
+            current["ok"] = True
+            current["written"] = int(current.get("written") or 0) + 1
+            current["last_write_at"] = now
+            current["last_error"] = ""
+        else:
+            current["ok"] = False
+            current["failed"] = int(current.get("failed") or 0) + 1
+            current["last_error"] = redact_text(error)[:500]
+            current["last_error_at"] = now
+        current["path"] = OPSLOG_PATH
+        if extra:
+            current.update(extra)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(current, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+        return current
+
+    try:
+        return _with_lock(path, _write)
+    except OSError:
+        return None
+
+
+def health() -> dict:
+    path = health_path()
+    if not os.path.exists(path):
+        return {
+            "ok": True,
+            "written": 0,
+            "failed": 0,
+            "last_error": "",
+            "last_error_at": None,
+            "last_write_at": None,
+            "path": OPSLOG_PATH,
+        }
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            data.setdefault("path", OPSLOG_PATH)
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {
+        "ok": False,
+        "written": 0,
+        "failed": 0,
+        "last_error": "health file unreadable",
+        "path": OPSLOG_PATH,
+    }
+
+
+def prune_old(max_age_days: Optional[int] = None) -> int:
+    days = retention_days() if max_age_days is None else max_age_days
+    if days <= 0 or not os.path.exists(OPSLOG_PATH):
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    def _prune():
+        kept = []
+        dropped = 0
+        with open(OPSLOG_PATH, encoding="utf-8") as f:
+            for line in f:
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    op = json.loads(raw)
+                except json.JSONDecodeError:
+                    dropped += 1
+                    continue
+                ts = _parse_ts(str(op.get("timestamp") or ""))
+                if ts is None or ts >= cutoff:
+                    kept.append(raw)
+                else:
+                    dropped += 1
+        if dropped:
+            tmp = OPSLOG_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                for raw in kept:
+                    f.write(raw + "\n")
+            os.replace(tmp, OPSLOG_PATH)
+        return dropped
+
+    return _with_lock(OPSLOG_PATH, _prune)
 
 
 def log_operation(
@@ -47,9 +256,9 @@ def log_operation(
         "task_id": task_id,
         "action_id": action_id,
         "action_logprob": action_logprob,
-        "target": target,
+        "target": redact_target(target),
         "execution_status": "completed" if success else "failed",
-        "result_summary": summary,
+        "result_summary": redact_text(summary),
         "action_type": action_type,
         "request_latency_ms": duration_ms,
         "metadata": {
@@ -59,16 +268,30 @@ def log_operation(
         },
         "context_features": context_features or {},
     }
-    with open(OPSLOG_PATH, "a") as f:
-        f.write(json.dumps(entry, default=str) + "\n")
-    return entry["id"]
+
+    def _append():
+        with open(OPSLOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+            f.flush()
+        return entry["id"]
+
+    try:
+        oid = _with_lock(OPSLOG_PATH, _append)
+        state = record_health(ok=True)
+        written = int((state or {}).get("written") or 0)
+        if written and written % 100 == 0:
+            prune_old()
+        return oid
+    except OSError as exc:
+        record_health(ok=False, error=str(exc))
+        raise
 
 
 def count_operations() -> int:
     """Aantal gelogde operaties."""
     if not os.path.exists(OPSLOG_PATH):
         return 0
-    with open(OPSLOG_PATH) as f:
+    with open(OPSLOG_PATH, encoding="utf-8") as f:
         return sum(1 for _ in f)
 
 
@@ -76,20 +299,29 @@ def tail(n: int = 10) -> list[dict]:
     """Laatste n operaties."""
     if not os.path.exists(OPSLOG_PATH):
         return []
-    with open(OPSLOG_PATH) as f:
+    with open(OPSLOG_PATH, encoding="utf-8") as f:
         lines = f.readlines()
     return [json.loads(l) for l in lines[-n:]]
 
 
 def stats() -> dict:
     """Basis statistieken over alle operaties."""
+    payload = {
+        "total": 0,
+        "by_task": {},
+        "by_status": {},
+        "avg_duration_ms": None,
+        "file": OPSLOG_PATH,
+        "health": health(),
+        "retention_days": retention_days(),
+    }
     if not os.path.exists(OPSLOG_PATH):
-        return {"total": 0, "by_task": {}, "by_status": {}, "avg_duration_ms": None}
+        return payload
     by_task = {}
     by_status = {}
     durations = []
     total = 0
-    with open(OPSLOG_PATH) as f:
+    with open(OPSLOG_PATH, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -107,16 +339,14 @@ def stats() -> dict:
             if d is not None:
                 durations.append(d)
     avg_dur = round(sum(durations) / len(durations), 1) if durations else None
-    return {
+    payload.update({
         "total": total,
         "by_task": by_task,
         "by_status": by_status,
         "avg_duration_ms": avg_dur,
-        "file": OPSLOG_PATH,
-    }
+    })
+    return payload
 
-
-# ---- CLI ----
 
 def main(argv=None) -> int:
     import argparse
@@ -144,6 +374,9 @@ def main(argv=None) -> int:
     p_tail.add_argument("--n", type=int, default=10)
 
     sub.add_parser("stats", help="Statistieken")
+    sub.add_parser("health", help="Schrijf/fout-status van de opslog")
+    p_prune = sub.add_parser("prune", help="Verwijder operaties ouder dan retentie")
+    p_prune.add_argument("--days", type=int, default=None)
 
     args = parser.parse_args(argv)
 
@@ -178,8 +411,14 @@ def main(argv=None) -> int:
             print("---")
         return 0
     elif args.cmd == "stats":
-        s = stats()
-        print(json.dumps(s, indent=2))
+        print(json.dumps(stats(), indent=2))
+        return 0
+    elif args.cmd == "health":
+        print(json.dumps(health(), indent=2))
+        return 0
+    elif args.cmd == "prune":
+        dropped = prune_old(args.days)
+        print(dropped)
         return 0
     parser.print_help()
     return 0

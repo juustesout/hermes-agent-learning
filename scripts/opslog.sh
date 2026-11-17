@@ -3,9 +3,13 @@
 # Gebruik: opslog task-id action-id target [duration_ms] [cost] [true/false] "summary"
 # Voorbeeld: opslog choose-scrape-strategy use_webclaw_scrape agentcursus.nl 3100 1 true "WebClaw scrape 24500 chars"
 
-PYTHON="python3"
-OPSLOG_PY="/opt/data/profiles/operator/agent-learning/opslog.py"
-CONSOLIDATE_PY="/opt/data/profiles/operator/agent-learning/consolidate_ops.py"
+set -euo pipefail
+
+PYTHON="${PYTHON:-python3}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="${AGENT_LEARNING_REPO:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}"
+OPSLOG_PY="${OPSLOG_PY:-$REPO_ROOT/opslog.py}"
+CONSOLIDATE_PY="${CONSOLIDATE_PY:-$REPO_ROOT/consolidate_ops.py}"
 
 case "${1:-}" in
   log)
@@ -24,6 +28,9 @@ case "${1:-}" in
   count)
     $PYTHON "$OPSLOG_PY" count
     ;;
+  health)
+    $PYTHON "$OPSLOG_PY" health
+    ;;
   consolidate)
     $PYTHON "$CONSOLIDATE_PY" --run
     ;;
@@ -31,12 +38,13 @@ case "${1:-}" in
     $PYTHON "$CONSOLIDATE_PY"
     ;;
   *)
-    echo "Gebruik: opslog {log|stats|tail|count|consolidate} [args...]"
+    echo "Gebruik: opslog {log|stats|tail|count|health|consolidate} [args...]"
     echo ""
     echo "  opslog log <task-id> <action-id> <target> [duration_ms] [cost] [success] [summary] [action-type] [logprob] [context-features-json]"
     echo "  opslog stats"
     echo "  opslog tail [n]"
     echo "  opslog count"
+    echo "  opslog health"
     echo "  opslog consolidate"
     echo ""
     echo "Voorbeelden:"

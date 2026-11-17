@@ -42,6 +42,40 @@ _TOOL_TASK = {
 }
 
 
+def logging_enabled() -> bool:
+    raw = os.environ.get("AGENT_LEARNING_OPSLOG_ENABLED", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def log_session_ids() -> bool:
+    raw = os.environ.get("AGENT_LEARNING_OPSLOG_SESSION_IDS", "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _load_json_map(raw: str) -> dict[str, str]:
+    if not raw.strip():
+        return {}
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {str(key): str(value) for key, value in loaded.items() if str(key).strip()}
+
+
+def load_tool_task_map() -> dict[str, str]:
+    mapping = dict(_TOOL_TASK)
+    mapping.update(_load_json_map(os.environ.get("AGENT_LEARNING_TOOL_TASK_MAP", "")))
+    path = os.environ.get("AGENT_LEARNING_TOOL_TASK_MAP_FILE", "").strip()
+    if path:
+        try:
+            mapping.update(_load_json_map(Path(path).read_text(encoding="utf-8")))
+        except OSError:
+            pass
+    return mapping
+
+
 def _truncate(value: Any, limit: int) -> str:
     text = str(value or "").strip()
     if len(text) <= limit:
@@ -55,12 +89,16 @@ def extract_target(args: Any) -> str:
     for key in _TARGET_KEYS:
         value = args.get(key)
         if isinstance(value, str) and value.strip():
-            return _truncate(value.strip(), _TARGET_MAX)
+            text = _truncate(value.strip(), _TARGET_MAX)
+            if opslog is not None:
+                return opslog.redact_target(text)
+            return text
     return ""
 
 
-def task_id_for_tool(tool_name: str) -> str:
-    return _TOOL_TASK.get(tool_name, DEFAULT_TASK_ID)
+def task_id_for_tool(tool_name: str, mapping: Optional[dict[str, str]] = None) -> str:
+    table = mapping if mapping is not None else load_tool_task_map()
+    return table.get(tool_name, DEFAULT_TASK_ID)
 
 
 def summarize_tool_call(
@@ -71,8 +109,12 @@ def summarize_tool_call(
 ) -> str:
     err = _truncate(error_message, _SUMMARY_MAX) if error_message else ""
     if err:
-        return _truncate(f"{tool_name}:{status} {err}", _SUMMARY_MAX)
-    return _truncate(f"{tool_name}:{status}", _SUMMARY_MAX)
+        text = _truncate(f"{tool_name}:{status} {err}", _SUMMARY_MAX)
+    else:
+        text = _truncate(f"{tool_name}:{status}", _SUMMARY_MAX)
+    if opslog is not None:
+        return opslog.redact_text(text)
+    return text
 
 
 def build_operation(
@@ -97,6 +139,15 @@ def build_operation(
             latency = int(duration_ms)
         except (TypeError, ValueError):
             latency = None
+    metadata = {
+        "hermes_status": outcome,
+        "tool_ok": outcome == "ok",
+        "task_success": False,
+    }
+    if log_session_ids():
+        metadata["session_id"] = session_id or ""
+        metadata["turn_id"] = turn_id or ""
+        metadata["tool_call_id"] = tool_call_id or ""
     return {
         "task_id": task_id_for_tool(name),
         "action_id": name,
@@ -107,25 +158,28 @@ def build_operation(
             tool_name=name, status=outcome, error_message=error_message
         ),
         "action_type": name,
-        "metadata": {
-            "hermes_status": outcome,
-            "session_id": session_id or "",
-            "turn_id": turn_id or "",
-            "tool_call_id": tool_call_id or "",
-        },
+        "metadata": metadata,
     }
 
 
 def on_post_tool_call(**kwargs) -> None:
     try:
+        if not logging_enabled():
+            return
         if opslog is None:
             return
         payload = build_operation(**kwargs)
         if payload is None:
             return
         opslog.log_operation(**payload)
-    except Exception:
+    except OSError:
         return
+    except Exception as exc:
+        try:
+            if opslog is not None:
+                opslog.record_health(ok=False, error=str(exc))
+        except Exception:
+            return
 
 
 def _handle_cli(args) -> None:
@@ -145,13 +199,17 @@ def _handle_cli(args) -> None:
     if cmd == "stats":
         print(json.dumps(opslog.stats(), indent=2))
         return
-    print("Usage: hermes agent-learning <stats|count|tail>")
+    if cmd == "health":
+        print(json.dumps(opslog.health(), indent=2))
+        return
+    print("Usage: hermes agent-learning <stats|count|tail|health>")
 
 
 def _setup_argparse(subparser) -> None:
     subs = subparser.add_subparsers(dest="al_command")
     subs.add_parser("stats", help="Show opslog stats")
     subs.add_parser("count", help="Count logged operations")
+    subs.add_parser("health", help="Show opslog write/error health")
     p_tail = subs.add_parser("tail", help="Show recent operations")
     p_tail.add_argument("-n", type=int, default=10)
     subparser.set_defaults(func=_handle_cli)

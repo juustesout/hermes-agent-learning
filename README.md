@@ -213,40 +213,55 @@ als basis en accepteren overrides via environment variables:
 automatisch naar `store/operations.jsonl` via `opslog.log_operation()`.
 Geen handmatige logging meer nodig.
 
+Enabling the plugin is the opt-in. Tool-call success (`status == ok`) is not
+user-task success; metadata stores `tool_ok` and `task_success=false`.
+
 ### Installatie
 
+`plugin.yaml` and `__init__.py` live at the repository root, so a Git install
+needs no symlinks. `hermes_plugin/` remains the implementation package.
+
 ```bash
-# 1. Installeer vanuit GitHub
 hermes plugins install juustesout/hermes-agent-learning --enable
-
-# 2. De plugin.yaml en __init__.py zitten in de hermes_plugin/ subdirectory.
-#    Hermes verwacht ze in de root van de plugin directory. Leg symlinks aan:
-cd /opt/data/profiles/operator/plugins/hermes-agent-learning
-ln -sf hermes_plugin/plugin.yaml plugin.yaml
-ln -sf hermes_plugin/__init__.py __init__.py
-
-# 3. Enable (indien --enable bij stap 1 niet werkte)
-hermes plugins enable agent-learning
-
-# 4. Verifieer
-hermes plugins doctor agent-learning
-
-# 5. Herstart de gateway
-hermes gateway restart
+hermes plugins doctor agent-learning --ci
 ```
 
-### Werking
+From a local checkout:
 
-`post_tool_call` mapped Hermes tool outcomes naar `operations.jsonl`. De hook roept
-`opslog.log_operation()` aan. Houd de repo importeerbaar (`PYTHONPATH=<repo>`,
-`AGENT_LEARNING_REPO=<repo>`, of `pip install -e .`) zodat de import werkt.
-Als `opslog` niet importeerbaar is, is de hook een no-op.
+```bash
+hermes plugins install . --enable
+hermes plugins doctor . --ci
+```
+
+Keep the repo importable (`PYTHONPATH=<repo>`, `AGENT_LEARNING_REPO=<repo>`,
+or `pip install -e .`) so the hook can import `opslog`. If `opslog` is missing,
+the hook is a no-op.
+
+### Store and privacy
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `AGENT_LEARNING_OPSLOG_DIR` | `AGENT_LEARNING_LOCAL_STORE_DIR` or `<repo>/store` | Where `operations.jsonl` is written |
+| `AGENT_LEARNING_LOCAL_STORE_DIR` | `<repo>/store` | Shared learning store |
+| `AGENT_LEARNING_OPSLOG_ENABLED` | `1` | Set `0` to keep the plugin loaded but silent |
+| `AGENT_LEARNING_OPSLOG_SESSION_IDS` | `0` | Set `1` to store Hermes session/turn ids |
+| `AGENT_LEARNING_OPSLOG_RETENTION_DAYS` | `30` | Drop older operations; `0` disables prune |
+| `AGENT_LEARNING_TOOL_TASK_MAP` | built-in web tools | JSON object `{tool_name: task_id}` |
+| `AGENT_LEARNING_TOOL_TASK_MAP_FILE` | unset | JSON file with the same mapping |
+
+Logged fields: `task_id`, `action_id`, redacted `target` (query strings stripped),
+redacted error summary, latency, tool status. No tool results. Session ids are
+off unless enabled. Query parameters and common secret patterns are redacted.
+There is no encryption; treat the JSONL file as sensitive.
+
+Check write health with `hermes agent-learning health` or `python3 opslog.py health`.
 
 ### CLI
 
 ```bash
 hermes agent-learning stats
 hermes agent-learning count
+hermes agent-learning health
 hermes agent-learning tail -n 20
 ```
 
@@ -279,15 +294,17 @@ Als Dependabot in een andere repo niet opent, controleer dan in GitHub:
 
 ## Related Work
 
-This project builds on [Microsoft agent-learning](https://github.com/microsoft/agent-learning) (v0.10.0) for the core REINFORCE learner and storage layer. Additional algorithms and architecture are inspired by:
+This project builds on [Microsoft agent-learning](https://github.com/microsoft/agent-learning) (MIT License, v0.10.x) for the core REINFORCE learner and storage layer. That package is a runtime dependency (`agent-learning>=0.10.0,<0.11`); this repository does not vendor or re-license it. Additional algorithms and architecture are inspired by:
 
 - **Self-Improving Agentic Systems** — LinUCB, Thompson sampling, cost-aware credit
 - **AgentForge** — Generic workflow selector pattern
 - **OpenJarvis** — Trace storage and skill discovery
 - **SAP contextual-bandit-agent-router** — MCP-based bandit service pattern
 
+Hermes is a product of Nous Research. This repository is an independent MIT-licensed observer/learning kernel (`juustesout/hermes-agent-learning`) and is not an official Nous Research distribution.
+
 ---
 
 ## License
 
-MIT
+MIT. Copyright (c) 2026 juustesout.

@@ -112,3 +112,77 @@ def test_cli_count_stats(tmp_path, monkeypatch, capsys):
     assert opslog.main(["stats"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["total"] == 1
+    assert "health" in payload
+
+
+def test_default_store_dir_prefers_opslog_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_LEARNING_OPSLOG_DIR", str(tmp_path / "ops"))
+    monkeypatch.setenv("AGENT_LEARNING_LOCAL_STORE_DIR", str(tmp_path / "store"))
+    assert opslog.default_store_dir() == str(tmp_path / "ops")
+
+
+def test_redact_target_strips_query_and_secrets():
+    assert "token=" not in opslog.redact_target("https://ex.com/a?token=abc&x=1")
+    assert opslog.redact_text("api_key=secret Bearer abcdef") != "api_key=secret Bearer abcdef"
+    assert "***" in opslog.redact_text("Authorization: Bearer abcdef")
+
+
+def test_log_redacts_target_and_summary(tmp_path, monkeypatch):
+    log_path = tmp_path / "operations.jsonl"
+    monkeypatch.setattr(opslog, "STORE_DIR", str(tmp_path))
+    monkeypatch.setattr(opslog, "OPSLOG_PATH", str(log_path))
+    opslog.log_operation(
+        task_id="t",
+        action_id="a",
+        target="https://ex.com/page?api_key=secret",
+        summary="token=abcd failure",
+    )
+    entry = json.loads(log_path.read_text().strip())
+    assert "secret" not in entry["target"]
+    assert "api_key=" not in entry["target"] or "***" in entry["target"]
+    assert "abcd" not in entry["result_summary"]
+
+
+def test_health_and_prune(tmp_path, monkeypatch):
+    log_path = tmp_path / "operations.jsonl"
+    monkeypatch.setattr(opslog, "STORE_DIR", str(tmp_path))
+    monkeypatch.setattr(opslog, "OPSLOG_PATH", str(log_path))
+    opslog.log_operation(task_id="t", action_id="a")
+    h = opslog.health()
+    assert h["ok"] is True
+    assert h["written"] >= 1
+    old = {
+        "id": "old-1",
+        "timestamp": "2000-01-01T00:00:00+00:00",
+        "task_id": "t",
+        "action_id": "a",
+        "execution_status": "completed",
+    }
+    new = {
+        "id": "new-1",
+        "timestamp": "2099-01-01T00:00:00+00:00",
+        "task_id": "t",
+        "action_id": "a",
+        "execution_status": "completed",
+    }
+    log_path.write_text(json.dumps(old) + "\n" + json.dumps(new) + "\n")
+    dropped = opslog.prune_old(1)
+    assert dropped == 1
+    remaining = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+    assert remaining == [new]
+
+
+def test_cli_health(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(opslog, "STORE_DIR", str(tmp_path))
+    monkeypatch.setattr(opslog, "OPSLOG_PATH", str(tmp_path / "operations.jsonl"))
+    assert opslog.main(["health"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "written" in payload
+
+
+def test_no_hardcoded_opt_store():
+    import inspect
+    import consolidate_ops
+
+    assert "/opt/data/profiles/operator/agent-learning/store" not in inspect.getsource(opslog)
+    assert "/opt/data/profiles/operator/agent-learning/store" not in inspect.getsource(consolidate_ops)
