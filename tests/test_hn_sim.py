@@ -36,8 +36,15 @@ def test_200_runs_write_decision_before_post(tmp_path, monkeypatch):
     assert summary["decision_arms"]["L"] > 0
     assert summary["decision_arms"]["B"] > 0
     assert summary["labeled"] == summary["sampled"]
-    assert summary["agreement"] is not None
-    assert summary["agreement"] >= 0.9
+    assert summary["live_labeled"] == 0
+    assert summary["live_agreement"] is None
+    assert summary["overlap"]["n"] == 400
+    assert summary["arm_balance"]["ok"] is True
+    assert "sim_data_in_evidence" in summary["alarms"]
+    for row in blind_label.load_items():
+        assert row.get("source") == "sim"
+    for row in blind_label.load_labels():
+        assert row.get("source") == "sim"
 
 
 def test_failures_are_enqueued(tmp_path, monkeypatch):
@@ -77,3 +84,15 @@ def test_cli_run_uses_isolated_evidence(tmp_path, monkeypatch, capsys):
     assert payload["runs"] == 4
     assert (evidence / "assignments.jsonl").exists()
     assert (evidence / "items.jsonl").exists()
+
+
+def test_sim_labels_never_enter_training(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    hn_sim.run_sim(runs=8, error_rate=0.0, auto_label=True, seed=3)
+    assert blind_label.report(include_sim=False)["labeled"] == 0
+    assert blind_label.report(include_sim=False)["agreement"] is None
+    assert hn_ranker.collect_training_rows() == []
+    from datetime import datetime, timezone
+    model = hn_ranker.train(cutoff=datetime(2026, 11, 17, tzinfo=timezone.utc), min_n=1)
+    assert model["model_version"] == hn_ranker.PRIOR_VERSION
+    assert model["n"] == 0

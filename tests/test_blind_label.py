@@ -196,3 +196,30 @@ def test_cli_next_empty_explains_status(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "No unlabeled items in the blind sample" in out
     assert "Last enqueue: never" in out
+
+
+def test_report_ignores_sim_labels(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(blind_label, "should_sample", lambda item_id, rate=0.2: True)
+    monkeypatch.setenv(blind_label.SOURCE_ENV, blind_label.SOURCE_SIM)
+    blind_label.enqueue_item(_item("sim-1", auto_relevant=True))
+    blind_label.record_label("sim-1", relevant=True, duplicate=False, needs_correction=False, rater="sim")
+    live = blind_label.report(include_sim=False)
+    mixed = blind_label.report(include_sim=True)
+    assert live["labeled"] == 0
+    assert live["agreement"] is None
+    assert mixed["labeled"] == 1
+    assert mixed["agreement"] == 1.0
+
+
+def test_arm_balance_and_overlap():
+    balanced = [{"arm": "L", "chosen_id": "a", "baseline_pick_id": "b"} for _ in range(20)]
+    balanced += [{"arm": "B", "chosen_id": "b", "baseline_pick_id": "b"} for _ in range(20)]
+    assert blind_label.arm_balance(balanced)["ok"] is True
+    overlap = blind_label.selection_overlap(balanced)
+    assert overlap["learned_n"] == 20
+    assert overlap["learned_same"] == 0
+    assert overlap["rate"] == 0.5
+    skewed = [{"arm": "L", "chosen_id": "x", "baseline_pick_id": "x"} for _ in range(40)]
+    assert blind_label.arm_balance(skewed)["ok"] is False
+    assert blind_label.selection_overlap(skewed)["learned_rate"] == 1.0
