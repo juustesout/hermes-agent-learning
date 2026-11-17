@@ -178,8 +178,8 @@ class ThompsonPolicy(Policy):
     def choose(self, state: Optional[Any] = None) -> Decision:
         """Thompson sample: draw from each Beta, pick max.
 
-        Returns the action with the highest sampled value, along with
-        its expected probability for logprob.
+        logprob is the sampling probability of the chosen action
+        (1/k on ties), not the Beta mean.
         """
         del state
         alphas = self._snapshot.metadata.get("thompson_alpha", {})
@@ -196,11 +196,21 @@ class ThompsonPolicy(Policy):
             )
             samples.append(sample)
 
-        # Pick max sample
+        # Pick max sample. Logprob is P(chosen action) under a categorical
+        # proportional to Beta means (sums to 1). Raw means do not form a
+        # distribution (uniform Beta(1,1) mean is 0.5 for every arm).
         idx = max(range(len(samples)), key=lambda i: samples[i])
         chosen = self._snapshot.actions[idx]
-        prob = max(probs[idx], 1e-12)
-        return Decision(action=chosen, logprob=math.log(prob), probabilities=probs)
+        total = sum(probs)
+        if total <= 0.0:
+            sel_p = 1.0 / max(len(probs), 1)
+        else:
+            sel_p = probs[idx] / total
+        return Decision(
+            action=chosen,
+            logprob=math.log(max(sel_p, 1e-12)),
+            probabilities=probs,
+        )
 
     def snapshot(self) -> PolicySnapshot:
         return PolicySnapshot.from_dict(self._snapshot.to_dict())
@@ -447,7 +457,7 @@ def train_thompson(
         policy = ThompsonPolicy.from_snapshot(snapshot)
 
     # Fetch episodes
-    episodes = store.query_episodes(agent_id, task_id=task_id, limit=limit, full_only=True)
+    episodes = store.query_episodes(agent_id, task_id=task_id, limit=limit, full_only=False)
     if len(episodes) < min_episodes:
         return {
             "task_id": task_id,

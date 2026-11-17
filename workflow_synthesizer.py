@@ -20,10 +20,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+def _slugify(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    return slug[:48]
 
 sys.path.insert(0, os.path.dirname(__file__))
 import env_setup  # noqa: F401 — ensures LocalFileStore backend
@@ -53,7 +58,12 @@ class NodeType:
     tags: List[str] = field(default_factory=list)
 
     def to_node(self, task_suffix: str = "") -> WorkflowNode:
-        task_id = f"{self.id}{task_suffix}"
+        if not task_suffix:
+            task_id = self.id
+        elif task_suffix.startswith("-"):
+            task_id = f"{self.id}{task_suffix}"
+        else:
+            task_id = f"{self.id}-{task_suffix}"
         return WorkflowNode(
             id=self.id,
             name=self.name,
@@ -114,6 +124,20 @@ NODE_TYPES: Dict[str, NodeType] = {
         default_correct_action="llm_transform",
         context_features={"complexity": 0.5, "volume": 0.3},
         tags=["transform", "data"],
+    ),
+    "store": NodeType(
+        id="store",
+        name="Opslaan",
+        description="Sla geëxtraheerde data lokaal of in een store op",
+        action_ids=["file_write", "db_insert", "skip"],
+        actions_short={
+            "file_write": "Bestand",
+            "db_insert": "Database",
+            "skip": "Overslaan",
+        },
+        default_correct_action="file_write",
+        context_features={"volume": 0.3, "has_schema": 0.0},
+        tags=["store", "output"],
     ),
     "create": NodeType(
         id="create",
@@ -206,8 +230,8 @@ WORKFLOW_TEMPLATES: Dict[str, Tuple[str, List[str], List[Tuple[str, str]]]] = {
     ),
     "scrape_extract_store": (
         "Scrape → Extraheer → Opslaan",
-        ["research", "extract", "publish"],
-        [("research", "extract"), ("extract", "publish")],
+        ["research", "extract", "store"],
+        [("research", "extract"), ("extract", "store")],
     ),
     "monitor_validate_notify": (
         "Monitor → Valideer → Notificeer",
@@ -439,6 +463,8 @@ class WorkflowSynthesizer:
         template: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         discount_factor: float = 0.8,
+        skill_id: Optional[str] = None,
+        skill_version: str = "1.0.0",
     ) -> WorkflowDAG:
         """Synthetiseer een workflow DAG uit een taakomschrijving.
 
@@ -456,8 +482,9 @@ class WorkflowSynthesizer:
         # ---- Stap 1: Bepaal template en node-volgorde ------------------
         template_name, node_order, edges = self._resolve_template(task, template)
 
-        # ---- Stap 2: Bouw nodes -----------------------------------------
-        task_suffix = f"-{uuid.uuid4().hex[:6]}"
+        # ---- Stap 2: Stabiele IDs (skill-naam + versie, geen uuid) -----
+        slug = _slugify(skill_id or task) or template_name
+        task_suffix = f"{slug}-v{skill_version}"
         nodes: List[WorkflowNode] = []
         for i, node_type_id in enumerate(node_order):
             nt = NODE_TYPES.get(node_type_id)
@@ -472,12 +499,17 @@ class WorkflowSynthesizer:
             nodes.append(node)
 
         # ---- Stap 3: Bouw DAG -------------------------------------------
-        dag_id = f"{template_name}_{uuid.uuid4().hex[:6]}"
+        dag_id = f"{slug}-v{skill_version}"
         dag = WorkflowDAG(
             id=dag_id,
             name=task[:60] if len(task) > 60 else task,
             nodes=nodes,
             discount_factor=discount_factor,
+            metadata={
+                "skill_id": slug,
+                "skill_version": skill_version,
+                "template": template_name,
+            },
         )
         for src, tgt in edges:
             dag.add(src, tgt)
@@ -504,6 +536,8 @@ class WorkflowSynthesizer:
         context: Optional[Dict[str, Any]] = None,
         discount_factor: float = 0.8,
         execute_fn: Optional[Callable] = None,
+        skill_id: Optional[str] = None,
+        skill_version: str = "1.0.0",
     ) -> WorkflowRun:
         """Synthetiseer en voer direct uit.
 
@@ -528,6 +562,8 @@ class WorkflowSynthesizer:
             template=template,
             context=ctx,
             discount_factor=discount_factor,
+            skill_id=skill_id,
+            skill_version=skill_version,
         )
 
         # Stap 2: Bouw callbacks
@@ -790,6 +826,10 @@ def main() -> int:
                         help="Toon beschikbare node types")
     parser.add_argument("--dry-run", action="store_true",
                         help="Alleen tonen, niet registreren")
+    parser.add_argument("--skill-id", default=None,
+                        help="Stabiele skill-id (default: slug van de taak)")
+    parser.add_argument("--skill-version", default="1.0.0",
+                        help="Skill-versie voor stabiele node/task-ids")
     args = parser.parse_args()
 
     if args.list_templates:
@@ -820,13 +860,15 @@ def main() -> int:
         task=args.task,
         template=args.template,
         context={"topic": args.topic},
+        skill_id=args.skill_id,
+        skill_version=args.skill_version,
     )
 
     # Toon resultaat
     print(f"\n{'=' * 50}")
     print(f"Workflow: {dag.name}")
     print(f"DAG ID:   {dag.id}")
-    print(f"Template: {dag.id.split('_')[0]}")
+    print(f"Template: {dag.metadata.get('template', '')}")
     print(f"{'=' * 50}")
     print()
 
@@ -842,9 +884,9 @@ def main() -> int:
     print(f"Discount: γ={dag.discount_factor}")
 
     if not args.dry_run and store is not None:
-        print(f"\nPolicies: {len(order)} Thompson policies geïnitialiseerd ✅")
-        print(f"Geregistreerd in DagRegistry ✅")
-        print(f"\nKlaar voor uitvoering met WorkflowRunner.")
+        print(f"\nPolicies: {len(order)} Thompson policies geinitialiseerd")
+        print("Geregistreerd in DagRegistry")
+        print("\nKlaar voor uitvoering met WorkflowRunner.")
 
     return 0
 
@@ -855,5 +897,5 @@ if __name__ == "__main__":
 
 __all__ = [
     "WorkflowSynthesizer", "NodeType", "NODE_TYPES", "WORKFLOW_TEMPLATES",
-    "make_local_reward", "make_constraints",
+    "make_local_reward", "make_constraints", "_slugify",
 ]
