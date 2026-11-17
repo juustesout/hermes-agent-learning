@@ -310,7 +310,9 @@ pytest -q tests/test_wp_mock.py tests/test_hn_sim.py
 ```
 
 This checks select → draft POST → enqueue → record-run → audit. It does not
-measure whether the content is good.
+measure whether the content is good. Sim rows are tagged `source=sim`.
+`report` and ranker training ignore them. Audit reports L/B overlap and a
+binomial arm-balance check.
 
 ## CI (GitHub Actions)
 

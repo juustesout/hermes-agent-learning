@@ -455,6 +455,8 @@ def collect_training_rows() -> list[dict]:
             continue
         outcome = outcomes.get(item_id, {})
         item = items.get(item_id, {})
+        if blind_label.is_sim(decision) or blind_label.is_sim(outcome) or blind_label.is_sim(item):
+            continue
         auto_relevant = outcome.get("auto_relevant")
         if auto_relevant is None:
             auto_relevant = item.get("auto_relevant")

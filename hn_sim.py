@@ -191,7 +191,8 @@ def run_once(
 
 
 def summarize() -> dict:
-    report = blind_label.report()
+    report = blind_label.report(include_sim=True)
+    live = blind_label.report(include_sim=False)
     audit = blind_label.audit(expected_posts=max(report["posted"], 1), hours=24 * 365)
     decisions = hn_ranker.load_decisions()
     arms = {"L": 0, "B": 0}
@@ -204,9 +205,13 @@ def summarize() -> dict:
         "sampled": report["sampled"],
         "labeled": report["labeled"],
         "agreement": report["agreement"],
+        "live_labeled": live["labeled"],
+        "live_agreement": live["agreement"],
         "by_arm": report["by_arm"],
         "decisions": len(decisions),
         "decision_arms": arms,
+        "overlap": audit.get("overlap"),
+        "arm_balance": audit.get("arm_balance"),
         "audit_ok": audit["ok"],
         "alarms": audit["alarms"],
         "missing_decision": audit.get("posted_without_decision") or [],
@@ -222,6 +227,7 @@ def run_sim(
     seed: int = 1,
     catalog_n: int = CATALOG_N,
 ) -> dict:
+    os.environ[blind_label.SOURCE_ENV] = blind_label.SOURCE_SIM
     mock = WPMock(error_rate=error_rate, seed=seed)
     base = mock.start()
     t0 = time.time()
@@ -286,7 +292,8 @@ def main(argv=None) -> int:
             catalog_n=args.catalog,
         )
         print(json.dumps(payload, indent=2, default=str))
-        return 0 if payload.get("audit_ok") and not payload.get("missing_decision") else 2
+        alarms = [a for a in payload.get("alarms") or [] if a != "sim_data_in_evidence"]
+        return 0 if not alarms and not payload.get("missing_decision") else 2
     parser.print_help()
     return 0
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,11 @@ EXPECTED_POSTS_PER_DAY = 8
 EXPECTED_RUNS_PER_DAY = 4
 DECISION_RECORD = "decision"
 OUTCOME_RECORD = "outcome"
+SOURCE_ENV = "AGENT_LEARNING_EVIDENCE_SOURCE"
+SOURCE_SIM = "sim"
+SOURCE_LIVE = "live"
+ARM_BALANCE_MIN_N = 20
+ARM_BALANCE_ALPHA = 0.01
 HIDDEN_FIELDS = frozenset(
     {
         "arm",
@@ -79,6 +85,26 @@ def evidence_dir() -> Path:
 
 def _path(name: str) -> Path:
     return evidence_dir() / name
+
+
+def current_source() -> str:
+    raw = os.environ.get(SOURCE_ENV, "").strip().lower()
+    if raw in {SOURCE_SIM, "simulation"}:
+        return SOURCE_SIM
+    return SOURCE_LIVE
+
+
+def is_sim(row: Optional[dict]) -> bool:
+    if not row:
+        return False
+    src = str(row.get("source") or "").strip().lower()
+    if src in {SOURCE_SIM, "simulation"}:
+        return True
+    return str(row.get("rater") or "").strip().lower() == SOURCE_SIM
+
+
+def live_only(rows: Iterable[dict]) -> list[dict]:
+    return [row for row in rows if not is_sim(row)]
 
 
 def parse_bool(value: Any) -> bool:
@@ -170,9 +196,12 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _append_jsonl(path: Path, row: dict) -> None:
+    payload = dict(row)
+    payload.setdefault("source", current_source())
+
     def _write():
         with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, default=str) + "\n")
+            f.write(json.dumps(payload, default=str) + "\n")
             f.flush()
 
     opslog._with_lock(str(path), _write)
@@ -420,12 +449,18 @@ def _by_id(rows: Iterable[dict]) -> dict[str, dict]:
     return out
 
 
-def report() -> dict:
-    items = load_items()
-    queue = load_queue()
-    assignments = _by_id(load_decisions())
-    assignments.update(_by_id(load_outcomes()))
-    latest = _latest_labels()
+def report(*, include_sim: bool = False) -> dict:
+    items = load_items() if include_sim else live_only(load_items())
+    queue = load_queue() if include_sim else live_only(load_queue())
+    decisions = load_decisions() if include_sim else live_only(load_decisions())
+    outcomes = load_outcomes() if include_sim else live_only(load_outcomes())
+    assignments = _by_id(decisions)
+    assignments.update(_by_id(outcomes))
+    latest = {
+        item_id: row
+        for item_id, row in _latest_labels().items()
+        if include_sim or not is_sim(row)
+    }
     labeled_n = sum(1 for row in queue if row.get("id") in latest)
     remaining = len(queue) - labeled_n
     compared = 0
@@ -469,6 +504,10 @@ def report() -> dict:
         "agreement": agreement,
         "agreement_floor": AGREEMENT_FLOOR,
         "automatic_measure_ok": None if agreement is None else agreement >= AGREEMENT_FLOOR,
+        "include_sim": include_sim,
+        "sim_rows": sum(1 for row in load_items() if is_sim(row)),
+        "overlap": selection_overlap(decisions),
+        "arm_balance": arm_balance(decisions),
     }
 
 
@@ -496,6 +535,69 @@ def _parse_ts(value: Any) -> Optional[datetime]:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _binom_sf(k: int, n: int, p: float = 0.5) -> float:
+    if n <= 0:
+        return 1.0
+    k = max(0, min(int(k), int(n)))
+    total = 0.0
+    for i in range(k, n + 1):
+        total += math.comb(n, i) * (p ** i) * ((1.0 - p) ** (n - i))
+    return total
+
+
+def arm_balance(decisions: Iterable[dict], *, p: float = P_LEARNED, alpha: float = ARM_BALANCE_ALPHA) -> dict:
+    counts = {arm: 0 for arm in ARMS}
+    n = 0
+    for row in decisions:
+        arm = normalize_arm(row.get("arm"))
+        if arm not in counts:
+            continue
+        counts[arm] += 1
+        n += 1
+    learned = counts.get("L", 0)
+    two_tail = min(1.0, 2.0 * min(_binom_sf(learned, n, p), _binom_sf(n - learned, n, 1.0 - p)))
+    return {
+        "n": n,
+        "L": counts.get("L", 0),
+        "B": counts.get("B", 0),
+        "p_learned": p,
+        "p_value": two_tail,
+        "ok": n < ARM_BALANCE_MIN_N or two_tail >= alpha,
+    }
+
+
+def selection_overlap(decisions: Iterable[dict]) -> dict:
+    n = 0
+    same = 0
+    for row in decisions:
+        chosen = str(row.get("chosen_id") or "")
+        baseline = str(row.get("baseline_pick_id") or "")
+        if not chosen or not baseline:
+            continue
+        n += 1
+        if chosen == baseline:
+            same += 1
+    learned = [row for row in decisions if normalize_arm(row.get("arm")) == "L"]
+    learned_n = 0
+    learned_same = 0
+    for row in learned:
+        chosen = str(row.get("chosen_id") or "")
+        baseline = str(row.get("baseline_pick_id") or "")
+        if not chosen or not baseline:
+            continue
+        learned_n += 1
+        if chosen == baseline:
+            learned_same += 1
+    return {
+        "n": n,
+        "same": same,
+        "rate": (same / n) if n else None,
+        "learned_n": learned_n,
+        "learned_same": learned_same,
+        "learned_rate": (learned_same / learned_n) if learned_n else None,
+    }
 
 
 def audit(*, expected_posts: int = EXPECTED_POSTS_PER_DAY, hours: int = 24) -> dict:
@@ -536,6 +638,13 @@ def audit(*, expected_posts: int = EXPECTED_POSTS_PER_DAY, hours: int = 24) -> d
         alarms.append("posted_below_expected")
     if attempted and len(items) < attempted:
         alarms.append("enqueue_lag")
+    overlap = selection_overlap(decisions)
+    balance = arm_balance(decisions)
+    if not balance["ok"]:
+        alarms.append("arm_imbalance")
+    sim_items = sum(1 for row in items if is_sim(row))
+    if sim_items:
+        alarms.append("sim_data_in_evidence")
     payload = {
         "ok": not alarms,
         "hours": hours,
@@ -549,6 +658,9 @@ def audit(*, expected_posts: int = EXPECTED_POSTS_PER_DAY, hours: int = 24) -> d
         "posted_runs": posted_runs,
         "failed_runs": failed_runs,
         "posted_without_decision": missing_decision,
+        "overlap": overlap,
+        "arm_balance": balance,
+        "sim_items": sim_items,
         "alarms": alarms,
         "success_definition": SUCCESS_DEFINITION,
     }
