@@ -157,7 +157,15 @@ def overlap_stats(decisions: list[dict]) -> dict:
         if d.get("chosen_id") and d.get("baseline_pick_id")
     ]
     same = sum(1 for chosen, base in pairs if chosen == base)
-    return {"n": len(pairs), "same": same, "rate": (same / len(pairs)) if pairs else None}
+    n = len(pairs)
+    n_contrast = n - same
+    return {
+        "n": n,
+        "same": same,
+        "n_contrast": n_contrast,
+        "rate": (same / n) if n else None,
+        "contrast_rate": (n_contrast / n) if n else None,
+    }
 
 
 def binom_two_sided(k: int, n: int) -> Optional[float]:
@@ -671,12 +679,17 @@ def selection_overlap(decisions: Iterable[dict]) -> dict:
         learned_n += 1
         if chosen == baseline:
             learned_same += 1
+    n_contrast = n - same
+    learned_contrast = learned_n - learned_same
     return {
         "n": n,
         "same": same,
+        "n_contrast": n_contrast,
         "rate": (same / n) if n else None,
+        "contrast_rate": (n_contrast / n) if n else None,
         "learned_n": learned_n,
         "learned_same": learned_same,
+        "learned_n_contrast": learned_contrast,
         "learned_rate": (learned_same / learned_n) if learned_n else None,
     }
 

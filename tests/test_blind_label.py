@@ -219,7 +219,10 @@ def test_arm_balance_and_overlap():
     overlap = blind_label.selection_overlap(balanced)
     assert overlap["learned_n"] == 20
     assert overlap["learned_same"] == 0
+    assert overlap["n_contrast"] == 20
+    assert overlap["learned_n_contrast"] == 20
     assert overlap["rate"] == 0.5
     skewed = [{"arm": "L", "chosen_id": "x", "baseline_pick_id": "x"} for _ in range(40)]
     assert blind_label.arm_balance(skewed)["ok"] is False
     assert blind_label.selection_overlap(skewed)["learned_rate"] == 1.0
+    assert blind_label.selection_overlap(skewed)["n_contrast"] == 0
