@@ -1,0 +1,46 @@
+{
+  "version": "2026-11-17.1",
+  "effective_from": "2026-11-17",
+  "changelog": [
+    {
+      "date": "2026-11-17",
+      "reason": "Initial freeze for the HN aidevforum evidence run"
+    }
+  ],
+  "workflows": {
+    "hn-aidevforum": {
+      "question": "Does the learned ranking pick better aidevforum topics than the frozen baseline?",
+      "unit": "posted_item",
+      "posts_per_day": 8,
+      "sample_rate": 0.2,
+      "agreement_floor": 0.9,
+      "automatic": {
+        "technical_success": "http_2xx",
+        "quality_proxy": "auto_relevant",
+        "duplicate_is_fail": true
+      },
+      "human": {
+        "fields": ["relevant", "duplicate", "needs_correction"],
+        "quality_success": "relevant and not duplicate"
+      },
+      "excluded_from_measurement": ["dedupe_filter"],
+      "notes": [
+        "HTTP 2xx is technical success only.",
+        "Blind labels judge relevance for AI development.",
+        "A relevance rejection or duplicate is a quality failure.",
+        "Rater must not see arm, policy, rank, or auto scores."
+      ]
+    },
+    "podcast-buzzsprout": {
+      "question": "Reliability and cost of a daily publish, not a lift test.",
+      "unit": "daily_run",
+      "automatic": {
+        "technical_success": "http_2xx"
+      },
+      "human": {
+        "fields": ["needs_correction"],
+        "window_hours": 24
+      }
+    }
+  }
+}

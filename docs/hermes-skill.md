@@ -165,6 +165,21 @@ aan voor elke Hermes tool-call — geen handmatige logging nodig.
 | web-research | web_search |
 | podcast-* | research, script, audio, publish |
 
+## Blind labels (HN evidence, sinds 17 Nov 2026)
+
+Bevroren vóór meting: `evidence/success_definition.json`, `evidence/hn_baseline.json`.
+Baseline = eerste twee overgebleven relevante items in bronvolgorde na harde dedupe.
+HTTP 2xx is technisch succes; kwaliteit = blinde labels.
+
+```bash
+python3 blind_label.py enqueue --json '{"id":"...","title":"...","url":"...","summary":"..."}'
+python3 blind_label.py next
+python3 blind_label.py label --id ... --relevant yes --duplicate no --needs-correction no
+python3 blind_label.py report
+```
+
+Rater ziet geen arm/policy/rank/auto-score. Sample = 20 procent, stabiele hash.
+
 ## Sessie-start
 
 ```bash

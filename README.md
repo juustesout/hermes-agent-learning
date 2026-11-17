@@ -265,6 +265,27 @@ hermes agent-learning health
 hermes agent-learning tail -n 20
 ```
 
+## Blind labels (HN evidence)
+
+Frozen before measurement: `evidence/success_definition.json` and
+`evidence/hn_baseline.json`. Baseline = first two remaining relevant items in
+source order after hard dedupe. HTTP 2xx is technical success only.
+
+The 6-hour HN job should enqueue each posted item (id, title, url, summary).
+Keep arm/policy/rank/auto scores in the same JSON if you have them; the rater
+never sees those fields.
+
+```bash
+python3 blind_label.py enqueue --json '{"id":"hn-1","title":"...","url":"...","summary":"..."}'
+python3 blind_label.py next
+python3 blind_label.py label --id hn-1 --relevant yes --duplicate no --needs-correction no
+python3 blind_label.py report
+```
+
+About 20 percent of posts are sampled (stable hash, ~11 labels/week at 8 posts/day).
+If rater/auto agreement drops below 90 percent, revise the automatic quality
+measure before using it as proof.
+
 ## CI (GitHub Actions)
 
 Deze repo bevat CI in `.github/workflows/ci.yml`.
