@@ -130,6 +130,8 @@ contain untrusted values (for example custom `action_id` strings).
 │
 ├── graph_evolution.py         # DagRegistry, MultiDagOrch, GraphOptimizer, Dashboard
 ├── hn_ranker.py               # HN slot coin-flip + item ranker (prior-v1 / logreg)
+├── hn_sim.py                  # Accelerated local posting job (loopback WP mock)
+├── sim/                       # WordPress draft mock + loopback client
 ├── blind_label.py             # Blind labels, enqueue, audit for HN evidence
 ├── skill_pack.py              # Export/import shareable workflow.json packs
 ├── skill_schema/              # Versioned JSON Schema + stdlib validator
@@ -296,6 +298,19 @@ About 20 percent of posts are sampled (stable hash, ~11 labels/week at 8 posts/d
 If rater/auto agreement drops below 90 percent, revise the automatic quality
 measure before using it as proof. The ranker stays on `prior-v1` (`rag_score`
 descending) until 200 auto-labeled posts and that agreement floor.
+
+### Local mechanical simulation
+
+`hn_sim.py` runs the 6h job against a loopback WordPress mock. Drafts only;
+publish is 403. Isolate evidence so production files stay untouched:
+
+```bash
+AGENT_LEARNING_EVIDENCE_DIR=/tmp/hn-sim python3 hn_sim.py run --runs 200
+pytest -q tests/test_wp_mock.py tests/test_hn_sim.py
+```
+
+This checks select → draft POST → enqueue → record-run → audit. It does not
+measure whether the content is good.
 
 ## CI (GitHub Actions)
 
