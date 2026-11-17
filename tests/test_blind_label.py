@@ -97,7 +97,7 @@ def test_cli_next_and_label(tmp_path, monkeypatch, capsys):
     ])
     assert rc == 0
     enq = json.loads(capsys.readouterr().out)
-    assert enq["arm"] in {"baseline", "learned"}
+    assert enq["arm"] in {"B", "L"}
     assert blind_label.main(["next"]) == 0
     out = capsys.readouterr().out
     assert "cli-1" in out
@@ -128,7 +128,7 @@ def test_assign_arm_is_stable_and_balanced():
     first = [blind_label.assign_arm(f"id-{i}")["arm"] for i in range(200)]
     second = [blind_label.assign_arm(f"id-{i}")["arm"] for i in range(200)]
     assert first == second
-    learned = first.count("learned")
+    learned = first.count("L")
     assert 70 <= learned <= 130
     row = blind_label.assign_arm("id-1")
     assert row["choice_prob"] == 0.5
@@ -144,7 +144,7 @@ def test_enqueue_splits_assignment_log(tmp_path, monkeypatch):
     assert "choice_prob" not in items
     assert "http_status" not in items
     assert assigned["id"] == "split-1"
-    assert assigned["arm"] in {"baseline", "learned"}
+    assert assigned["arm"] in {"B", "L"}
     assert assigned["http_status"] == 201
     assert assigned["technical_success"] is True
     assert result["arm"] == assigned["arm"]
@@ -152,7 +152,7 @@ def test_enqueue_splits_assignment_log(tmp_path, monkeypatch):
     assert "arm" not in card
     dumped = json.dumps(card)
     assert "learned" not in dumped
-    assert "baseline" not in dumped
+    assert '"arm"' not in dumped
 
 
 def test_enqueue_failed_http(tmp_path, monkeypatch):
@@ -172,4 +172,27 @@ def test_audit_detects_enqueue_lag(tmp_path, monkeypatch):
     assert payload["ok"] is False
     assert "posted_below_expected" in payload["alarms"]
     assert "enqueue_lag" in payload["alarms"]
+    assert "posted_without_decision" in payload["alarms"]
     assert blind_label.main(["audit"]) == 2
+
+
+def test_cli_label_unsampled_is_clear(tmp_path, monkeypatch, capsys):
+    _isolate(tmp_path, monkeypatch)
+    rc = blind_label.main([
+        "label",
+        "--id", "missing",
+        "--relevant", "yes",
+        "--duplicate", "no",
+        "--needs-correction", "no",
+    ])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "not in the blind sample" in err
+
+
+def test_cli_next_empty_explains_status(tmp_path, monkeypatch, capsys):
+    _isolate(tmp_path, monkeypatch)
+    assert blind_label.main(["next"]) == 0
+    out = capsys.readouterr().out
+    assert "No unlabeled items in the blind sample" in out
+    assert "Last enqueue: never" in out

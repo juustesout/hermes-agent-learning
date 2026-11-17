@@ -129,6 +129,8 @@ contain untrusted values (for example custom `action_id` strings).
 ├── podcast_workflow.py        # Concrete 6-node podcast DAG + CLI
 │
 ├── graph_evolution.py         # DagRegistry, MultiDagOrch, GraphOptimizer, Dashboard
+├── hn_ranker.py               # HN slot coin-flip + item ranker (prior-v1 / logreg)
+├── blind_label.py             # Blind labels, enqueue, audit for HN evidence
 ├── skill_pack.py              # Export/import shareable workflow.json packs
 ├── skill_schema/              # Versioned JSON Schema + stdlib validator
 │                              #   (workflow, node, episode, reward, case)
@@ -267,20 +269,16 @@ hermes agent-learning tail -n 20
 
 ## Blind labels (HN evidence)
 
-Frozen before measurement: `evidence/success_definition.json` and
-`evidence/hn_baseline.json`. Baseline = first two remaining relevant items in
-source order after hard dedupe. HTTP 2xx is technical success only.
+Frozen before measurement: `evidence/success_definition.json`,
+`evidence/hn_baseline.json`, and `evidence/hn_ranker.json`. Baseline = first
+remaining relevant item in source order after hard dedupe. Learned = `hn_ranker.py`
+on the same remaining pool. HTTP 2xx is technical success only.
 
-Randomization (option 1): before posting, flip a coin per item id.
-
-```bash
-python3 blind_label.py assign --id hn-1
-```
-
-`arm` is `learned` or `baseline` with `p_learned=0.5`. Follow that arm. After the
-HTTP attempt, enqueue even on non-2xx:
+Randomization is one coin per posting slot (`p_learned=0.5`). The 6h job must
+select, then post, then enqueue:
 
 ```bash
+python3 hn_ranker.py select --run-id 2026-11-17T12 --json '[{"id":"...","title":"...","url":"...","rag_score":0.8,"source_rank":0}]'
 python3 blind_label.py enqueue --json '{"id":"hn-1","title":"...","url":"...","summary":"...","http_status":201,"auto_relevant":true}'
 python3 blind_label.py record-run --attempted 2 --posted 2 --failed 0 --run-id 2026-11-17T12
 python3 blind_label.py next
@@ -289,12 +287,15 @@ python3 blind_label.py report
 python3 blind_label.py audit
 ```
 
-`items.jsonl` is rater-safe. `assignments.jsonl` holds arm, choice_prob, and
-HTTP status. `audit` exits 2 if today's posts lag the 6h job.
+`items.jsonl` is rater-safe. `assignments.jsonl` holds one decision record per
+slot (arm L or B, pool, chosen_id, features) and one outcome record per HTTP
+attempt. `audit` exits 2 if posts lag, a post has no decision, or the kill
+switch is on (`AGENT_LEARNING_HN_RANKER_KILL=1`).
 
 About 20 percent of posts are sampled (stable hash, ~11 labels/week at 8 posts/day).
 If rater/auto agreement drops below 90 percent, revise the automatic quality
-measure before using it as proof.
+measure before using it as proof. The ranker stays on `prior-v1` (`rag_score`
+descending) until 200 auto-labeled posts and that agreement floor.
 
 ## CI (GitHub Actions)
 
