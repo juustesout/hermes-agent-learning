@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skill-schema.local/v1.0.0/node.schema.json",
+  "title": "Workflow node",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "task_id", "action_ids"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "task_id": { "type": "string", "minLength": 1 },
+    "action_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "actions_short": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "metadata": { "type": "object" }
+  }
+}

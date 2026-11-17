@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skill-schema.local/v1.0.0/reward.schema.json",
+  "title": "Episode reward",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "episode_id", "agent_id", "source", "value"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "episode_id": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "minLength": 1 },
+    "source": {
+      "type": "string",
+      "enum": [
+        "metric",
+        "aggregate",
+        "human_approval",
+        "test_result",
+        "latency_penalty",
+        "cost_penalty"
+      ]
+    },
+    "value": { "type": "number", "minimum": -1, "maximum": 1 },
+    "raw_value": true,
+    "metric": { "type": ["string", "null"] },
+    "rubric": { "type": ["string", "null"] },
+    "evaluator": { "type": ["string", "null"] },
+    "metadata": { "type": "object" },
+    "created_at": { "type": "string" }
+  }
+}
