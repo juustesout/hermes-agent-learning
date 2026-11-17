@@ -133,7 +133,7 @@ contain untrusted values (for example custom `action_id` strings).
 ├── skill_schema/              # Versioned JSON Schema + stdlib validator
 │                              #   (workflow, node, episode, reward, case)
 ├── schema/workflow.schema.json  # compat alias → skill_schema/schemas/skill.schema.json
-├── hermes_plugin/             # Optional Hermes observer (plugin.yaml + register)
+├── hermes_plugin/             # Hermes observer — standaard sinds 17 Nov 2026
 │
 ├── cron_workflow.sh           # Daily cron: train + run + dashboard
 ├── train_scrape_policy.sh     # Every-6h cron: scrape policy training
@@ -143,7 +143,8 @@ contain untrusted values (for example custom `action_id` strings).
 │   ├── policies/
 │   ├── rewards/
 │   └── runs/
-├── dashboard/                 # Generated HTML (gitignored)
+├── docs/                      # Documentatie voor andere agents/developers
+│   └── hermes-skill.md        # SKILL.md snapshot (Hermes skill store is source of truth)
 └── pyproject.toml
 ```
 
@@ -169,39 +170,18 @@ Learner
 
 ## Operation Logging (OpsLog)
 
-Sinds 16 Nov 2026: elke tool-operatie wordt automatisch gelogd naar `store/operations.jsonl`.
-De nachtelijke cron consolideert de ruwe logs naar volwaardige leer-episodes.
+Tool-operaties worden automatisch gelogd naar `store/operations.jsonl` via de
+**Hermes plugin** (zie sectie hieronder). Geen handmatige logging nodig.
+
+De nachtelijke cron (`opslog-consolidate`, 03:00 UTC) consolideert de ruwe logs
+naar volwaardige leer-episodes.
 
 | Component | Locatie |
 |-----------|---------|
-| **CLI/Python logger** | `opslog.py` |
-| **Shell wrapper** | `scripts/opslog.sh` |
+| **Hermes plugin** | `hermes_plugin/__init__.py` — `post_tool_call` hook → `opslog.log_operation()` |
 | **Consolidator** | `consolidate_ops.py` — ruwe log → episode + reward |
 | **Live log** | `store/operations.jsonl` (append-only) |
 | **Cron** | `opslog-consolidate` — elke nacht 03:00 UTC |
-
-### Gebruik
-
-```python
-from opslog import log_operation
-log_operation(task_id="choose-scrape-strategy",
-  action_id="use_webclaw_scrape", target="site.nl",
-  duration_ms=3100, cost=1, summary="WebClaw scrape 24500 chars",
-  action_type="web_scrape")
-```
-
-```bash
-# Bash wrapper
-bash scripts/opslog.sh log <task-id> <action-id> <target> [dur_ms] [cost] [ok] [summary] [type]
-
-# Stats
-python3 opslog.py stats
-python3 opslog.py tail --n 20
-python3 opslog.py count
-
-# Consolidatie
-python3 consolidate_ops.py --run
-```
 
 ### Task-ID conventies
 
@@ -227,20 +207,42 @@ als basis en accepteren overrides via environment variables:
 - `AGENT_LEARNING_LOCAL_STORE_DIR` (default: `<repo>/store`)
 - `DASHBOARD_DIR` (default: `<repo>/dashboard`, alleen `cron_workflow.sh`)
 
-## Hermes plugin (optional)
+## Hermes plugin (standaard sinds 17 Nov 2026)
 
-`hermes_plugin/` is a thin observer. It does not change the learning kernel.
+`hermes_plugin/` is een thin Hermes observer. Hij logt elke Hermes tool-call
+automatisch naar `store/operations.jsonl` via `opslog.log_operation()`.
+Geen handmatige logging meer nodig.
+
+### Installatie
 
 ```bash
-# From this checkout (Hermes copies the plugin directory)
-hermes plugins install ./hermes_plugin
+# 1. Installeer vanuit GitHub
+hermes plugins install juustesout/hermes-agent-learning --enable
+
+# 2. De plugin.yaml en __init__.py zitten in de hermes_plugin/ subdirectory.
+#    Hermes verwacht ze in de root van de plugin directory. Leg symlinks aan:
+cd /opt/data/profiles/operator/plugins/hermes-agent-learning
+ln -sf hermes_plugin/plugin.yaml plugin.yaml
+ln -sf hermes_plugin/__init__.py __init__.py
+
+# 3. Enable (indien --enable bij stap 1 niet werkte)
 hermes plugins enable agent-learning
-hermes plugins doctor ./hermes_plugin --ci
+
+# 4. Verifieer
+hermes plugins doctor agent-learning
+
+# 5. Herstart de gateway
+hermes gateway restart
 ```
 
-Keep this repository importable (`PYTHONPATH=<repo>`, `AGENT_LEARNING_REPO=<repo>`, or `pip install -e .`) so the hook can call `opslog.log_operation`. If `opslog` is missing, the hook is a no-op.
+### Werking
 
-`post_tool_call` maps Hermes tool outcomes onto `operations.jsonl`. Callbacks accept `**kwargs` and fail open.
+`post_tool_call` mapped Hermes tool outcomes naar `operations.jsonl`. De hook roept
+`opslog.log_operation()` aan. Houd de repo importeerbaar (`PYTHONPATH=<repo>`,
+`AGENT_LEARNING_REPO=<repo>`, of `pip install -e .`) zodat de import werkt.
+Als `opslog` niet importeerbaar is, is de hook een no-op.
+
+### CLI
 
 ```bash
 hermes agent-learning stats
