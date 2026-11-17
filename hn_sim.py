@@ -36,7 +36,7 @@ def make_catalog(n: int = CATALOG_N, seed: int = 1) -> list[dict]:
     )
     catalog = []
     for i in range(n):
-        item_id = f"hn-{i:04d}"
+        item_id = f"sim-{i:04d}"
         if rng.random() < 0.8:
             rag = rng.uniform(RELEVANT_RAG, 1.0)
         else:

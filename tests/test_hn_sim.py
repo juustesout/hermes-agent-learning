@@ -39,11 +39,13 @@ def test_200_runs_write_decision_before_post(tmp_path, monkeypatch):
     assert summary["live_labeled"] == 0
     assert summary["live_agreement"] is None
     assert summary["overlap"]["n"] == 400
+    assert summary["overlap"]["n_contrast"] == summary["overlap"]["n"] - summary["overlap"]["same"]
     assert summary["arm_balance"]["ok"] is True
     assert "sim_data_in_evidence" not in summary["alarms"]
     assert "high_overlap" not in summary["alarms"]
     for row in blind_label.load_items():
         assert row.get("source") == "sim"
+        assert str(row["id"]).startswith("sim-")
     for row in blind_label.load_labels():
         assert row.get("source") == "sim"
 
@@ -58,6 +60,12 @@ def test_failures_are_enqueued(tmp_path, monkeypatch):
     assert summary["jobs_posted"] == summary["wp_posts"]
     assert summary["decisions"] == summary["posted"]
     assert summary["posted"] == summary["jobs_posted"] + summary["jobs_failed"]
+
+
+def test_sim_catalog_ids_use_sim_prefix():
+    catalog = hn_sim.make_catalog(n=5, seed=1)
+    assert [row["id"] for row in catalog] == [f"sim-{i:04d}" for i in range(5)]
+    assert all(row["hn_id"].startswith("sim-") for row in catalog)
 
 
 def test_learned_and_baseline_can_differ_in_sim_catalog():
