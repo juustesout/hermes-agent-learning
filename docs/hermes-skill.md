@@ -167,12 +167,13 @@ aan voor elke Hermes tool-call — geen handmatige logging nodig.
 
 ## Blind labels (HN evidence, sinds 17 Nov 2026)
 
-Bevroren vóór meting: `evidence/success_definition.json`, `evidence/hn_baseline.json`.
-Baseline = eerste twee overgebleven relevante items in bronvolgorde na harde dedupe.
-HTTP 2xx is technisch succes; kwaliteit = blinde labels.
+Bevroren vóór meting: `evidence/success_definition.json`, `evidence/hn_baseline.json`,
+`evidence/hn_ranker.json`. Baseline = eerste overgebleven relevante item in
+bronvolgorde na harde dedupe. Learned = `hn_ranker.py` op dezelfde resterende pool.
+HTTP 2xx is technisch succes; kwaliteit = blinde labels. Munt-worp per slot, p=0.5.
 
 ```bash
-python3 blind_label.py assign --id ...
+python3 hn_ranker.py select --run-id ... --json '[...pool...]'
 python3 blind_label.py enqueue --json '{"id":"...","title":"...","url":"...","summary":"...","http_status":201}'
 python3 blind_label.py record-run --attempted 2 --posted 2 --failed 0
 python3 blind_label.py next
@@ -181,8 +182,8 @@ python3 blind_label.py report
 python3 blind_label.py audit
 ```
 
-Rater ziet geen arm/policy/rank/auto-score. Arm staat in `assignments.jsonl`.
-Munt-worp per item, p=0.5. Sample = 20 procent, stabiele hash.
+Rater ziet geen arm/policy/rank/auto-score. Decision + outcome staan in `assignments.jsonl`.
+Sample = 20 procent, stabiele hash. Kill switch: `AGENT_LEARNING_HN_RANKER_KILL=1`.
 
 ## Sessie-start
 

@@ -1,0 +1,40 @@
+{
+  "id": "hn-aidevforum-ranker-v1",
+  "version": "2026-11-17.3",
+  "effective_from": "2026-11-17",
+  "workflow": "hn-aidevforum",
+  "features": [
+    "source_rank",
+    "rag_score",
+    "hn_points",
+    "hn_comments",
+    "age_hours",
+    "title_len",
+    "domain_cat"
+  ],
+  "forbidden_features": [
+    "posted_at",
+    "http_status",
+    "labels",
+    "auto_relevant",
+    "auto_duplicate",
+    "relevant",
+    "duplicate",
+    "needs_correction",
+    "quality_success"
+  ],
+  "prior": {
+    "id": "prior-v1",
+    "rule": "Choose the remaining pool item with the highest rag_score. Ties break by lower source_rank, then id."
+  },
+  "model": {
+    "id": "logreg-v1",
+    "type": "l2_logistic_regression",
+    "min_train_n": 200,
+    "train_label": "auto_relevant",
+    "train_requires_agreement": 0.9,
+    "eval_label": "human_blind_label",
+    "retrain_weekday_utc": 6
+  },
+  "kill_switch": "AGENT_LEARNING_HN_RANKER_KILL"
+}

@@ -1,16 +1,17 @@
 {
   "id": "hn-first-two-relevant-source-order",
-  "version": "2026-11-17.1",
+  "version": "2026-11-17.3",
   "effective_from": "2026-11-17",
   "workflow": "hn-aidevforum",
-  "rule": "After RAG relevance filter and hard dedupe of already-posted items, take the first two remaining HN items in source order.",
+  "rule": "After RAG relevance filter and hard dedupe of already-posted items, take the first remaining HN item in source order for a baseline slot. Learned slots use hn_ranker.py on the same remaining pool.",
   "fetch_size": 30,
   "posts_per_run": 2,
   "runs_per_day": 4,
   "dedupe": "hard_rule_not_in_measurement",
   "randomization": {
     "option": 1,
+    "unit": "slot",
     "p_learned": 0.5,
-    "salt": "hn-aidevforum-2026-11-17.2"
+    "salt": "hn-aidevforum-2026-11-17.3"
   }
 }

@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-17.2",
+  "version": "2026-11-17.3",
   "effective_from": "2026-11-17",
   "changelog": [
     {
@@ -9,22 +9,36 @@
     {
       "date": "2026-11-17",
       "reason": "Option 1: per-item coin flip, p_learned=0.5, salt hn-aidevforum-2026-11-17.2. Arm and choice_prob live in assignments.jsonl only."
+    },
+    {
+      "date": "2026-11-17",
+      "reason": "Slot-level coin flip. A run draws one arm per posting slot from the same remaining pool. Arms are L (ranker) and B (baseline). Analysis is intention-to-treat on slots. Sample hash salt stays hn-aidevforum-2026-11-17.2."
     }
   ],
   "workflows": {
     "hn-aidevforum": {
       "question": "Does the learned ranking pick better aidevforum topics than the frozen baseline?",
-      "unit": "posted_item",
+      "unit": "slot",
       "posts_per_day": 8,
+      "posts_per_run": 2,
+      "runs_per_day": 4,
       "sample_rate": 0.2,
       "agreement_floor": 0.9,
       "randomization": {
         "option": 1,
-        "unit": "item",
+        "unit": "slot",
         "p_learned": 0.5,
-        "salt": "hn-aidevforum-2026-11-17.2",
+        "salt": "hn-aidevforum-2026-11-17.3",
+        "sample_salt": "hn-aidevforum-2026-11-17.2",
         "log": "assignments.jsonl",
-        "analysis": "two-proportion test with inverse probability weights; no peeking except safety stop"
+        "analysis": "intention-to-treat two-proportion test on slots; p=0.5 so weights are equal; no peeking except safety stop"
+      },
+      "ranker": {
+        "file": "hn_ranker.py",
+        "prior": "rag_score descending until 200 auto-labeled posts and rater/auto agreement >= 0.9",
+        "model": "L2 logistic regression on allowlisted features",
+        "kill_switch": "AGENT_LEARNING_HN_RANKER_KILL",
+        "fallback": "ranker exception logs arm B with fallback=true"
       },
       "automatic": {
         "technical_success": "http_2xx",
@@ -42,7 +56,9 @@
         "A relevance rejection or duplicate is a quality failure.",
         "Rater must not see arm, policy, rank, or auto scores.",
         "Enqueue successful and failed HTTP attempts.",
-        "Daily audit compares job attempts with enqueued items."
+        "Daily audit compares job attempts with enqueued items.",
+        "A posted item without a prior decision record is an audit alarm.",
+        "Both arms choose from the same RAG-filtered, de-duplicated pool."
       ]
     },
     "podcast-buzzsprout": {

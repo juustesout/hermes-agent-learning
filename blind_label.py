@@ -3,7 +3,7 @@
 Raters see title/url/summary only. Arm, policy, rank, and auto scores stay
 in assignments.jsonl, never in the rater card.
 Sampling is a stable 20 percent of posted item ids.
-Assignment is a per-item coin flip (option 1) with a frozen salt.
+Slot assignment and ranking live in hn_ranker.py.
 """
 
 from __future__ import annotations
@@ -21,14 +21,17 @@ import env_setup  # noqa: F401
 import opslog
 
 WORKFLOW = "hn-aidevforum"
-SUCCESS_DEFINITION = "2026-11-17.2"
+SUCCESS_DEFINITION = "2026-11-17.3"
 SAMPLE_RATE = 0.2
 AGREEMENT_FLOOR = 0.9
 ASSIGN_SALT = "hn-aidevforum-2026-11-17.2"
 P_LEARNED = 0.5
-ARMS = ("baseline", "learned")
+ARMS = ("B", "L")
+ARM_ALIASES = {"B": "B", "L": "L", "baseline": "B", "learned": "L"}
 EXPECTED_POSTS_PER_DAY = 8
 EXPECTED_RUNS_PER_DAY = 4
+DECISION_RECORD = "decision"
+OUTCOME_RECORD = "outcome"
 HIDDEN_FIELDS = frozenset(
     {
         "arm",
@@ -47,6 +50,16 @@ HIDDEN_FIELDS = frozenset(
         "action_logprob",
         "http_status",
         "auto_duplicate",
+        "fallback",
+        "kill_switch",
+        "ranker_score",
+        "pool_ids",
+        "model_version",
+        "slot",
+        "chosen_id",
+        "baseline_pick_id",
+        "features",
+        "run_id",
     }
 )
 VISIBLE_FIELDS = ("id", "title", "url", "summary", "posted_at", "hn_id", "workflow")
@@ -92,17 +105,41 @@ def should_sample(item_id: str, rate: float = SAMPLE_RATE) -> bool:
     return _unit(item_id, "sample") < rate
 
 
+def normalize_arm(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    return ARM_ALIASES.get(str(value).strip())
+
+
 def assign_arm(item_id: str, p_learned: float = P_LEARNED) -> dict:
+    """Legacy per-item coin. Prefer hn_ranker.assign_slot_arm for posting."""
     draw = _unit(item_id, "arm")
-    arm = "learned" if draw < p_learned else "baseline"
+    arm = "L" if draw < p_learned else "B"
     return {
         "id": item_id,
         "arm": arm,
         "p_learned": p_learned,
-        "choice_prob": p_learned if arm == "learned" else 1.0 - p_learned,
+        "choice_prob": P_LEARNED,
         "draw": draw,
         "salt": ASSIGN_SALT,
     }
+
+
+def load_decisions() -> list[dict]:
+    return [row for row in load_assignments() if row.get("record") == DECISION_RECORD]
+
+
+def load_outcomes() -> list[dict]:
+    return [row for row in load_assignments() if row.get("record") == OUTCOME_RECORD]
+
+
+def latest_decision_for(item_id: str) -> Optional[dict]:
+    found = None
+    for row in load_decisions():
+        chosen = str(row.get("chosen_id") or row.get("id") or "")
+        if chosen == item_id:
+            found = row
+    return found
 
 
 def blind_view(item: dict) -> dict:
@@ -191,8 +228,18 @@ def assignment_record(item: dict, assigned: dict) -> dict:
         http_status = int(http_status) if http_status is not None else None
     except (TypeError, ValueError):
         http_status = None
-    return {
-        **assigned,
+    arm = normalize_arm(assigned.get("arm") or item.get("arm"))
+    run_id = assigned.get("run_id") or item.get("run_id")
+    slot = assigned.get("slot") if assigned.get("slot") is not None else item.get("slot")
+    payload = {
+        "record": OUTCOME_RECORD,
+        "id": assigned.get("id") or item.get("id"),
+        "chosen_id": assigned.get("chosen_id") or assigned.get("id") or item.get("id"),
+        "arm": arm,
+        "run_id": run_id,
+        "slot": slot,
+        "p_learned": assigned.get("p_learned", P_LEARNED),
+        "choice_prob": assigned.get("choice_prob", P_LEARNED),
         "http_status": http_status,
         "technical_success": technical_success(http_status),
         "auto_relevant": item.get("auto_relevant"),
@@ -201,6 +248,11 @@ def assignment_record(item: dict, assigned: dict) -> dict:
         "success_definition": SUCCESS_DEFINITION,
         "workflow": WORKFLOW,
     }
+    if assigned.get("fallback") is not None:
+        payload["fallback"] = assigned.get("fallback")
+    if assigned.get("kill_switch") is not None:
+        payload["kill_switch"] = assigned.get("kill_switch")
+    return payload
 
 
 def technical_success(http_status: Any) -> Optional[bool]:
@@ -223,15 +275,21 @@ def enqueue_item(item: dict) -> dict:
         raise ValueError("item.title and item.url are required")
     existing = _ids(load_items())
     if item_id in existing:
-        assigned = next((row for row in load_assignments() if row.get("id") == item_id), {})
+        assigned = latest_decision_for(item_id) or next(
+            (row for row in load_outcomes() if str(row.get("id") or row.get("chosen_id")) == item_id),
+            {},
+        )
         return {
             "id": item_id,
             "enqueued": False,
             "sampled": item_id in _ids(load_queue()),
-            "arm": assigned.get("arm"),
+            "arm": normalize_arm(assigned.get("arm")),
             "choice_prob": assigned.get("choice_prob"),
         }
-    assigned = assign_arm(item_id)
+    assigned = latest_decision_for(item_id)
+    if assigned is None:
+        assigned = assign_arm(item_id)
+        assigned["missing_decision"] = True
     record = public_item(item)
     record.setdefault("posted_at", datetime.now(timezone.utc).isoformat())
     _append_jsonl(_path("items.jsonl"), record)
@@ -250,9 +308,10 @@ def enqueue_item(item: dict) -> dict:
         "id": item_id,
         "enqueued": True,
         "sampled": sampled,
-        "arm": assigned["arm"],
-        "choice_prob": assigned["choice_prob"],
+        "arm": normalize_arm(assigned.get("arm")),
+        "choice_prob": assigned.get("choice_prob", P_LEARNED),
         "http_status": item.get("http_status"),
+        "missing_decision": bool(assigned.get("missing_decision")),
     }
 
 
@@ -268,6 +327,35 @@ def unlabeled_queue() -> list[dict]:
         if item:
             pending.append(item)
     return pending
+
+
+def queue_status() -> dict:
+    items = load_items()
+    queue = load_queue()
+    labeled = _ids(load_labels())
+    pending = unlabeled_queue()
+    last_enqueue = None
+    for row in items:
+        ts = row.get("posted_at")
+        if ts and (last_enqueue is None or str(ts) > str(last_enqueue)):
+            last_enqueue = ts
+    for row in queue:
+        ts = row.get("queued_at")
+        if ts and (last_enqueue is None or str(ts) > str(last_enqueue)):
+            last_enqueue = ts
+    since = 0
+    if last_enqueue:
+        cutoff = _parse_ts(last_enqueue)
+        if cutoff:
+            since = sum(1 for row in items if (_parse_ts(row.get("posted_at")) or cutoff) >= cutoff)
+    return {
+        "pending": len(pending),
+        "sampled": len(queue),
+        "labeled": sum(1 for row in queue if row.get("id") in labeled),
+        "posted": len(items),
+        "last_enqueue": last_enqueue,
+        "items_since_last_enqueue": since,
+    }
 
 
 def next_card() -> Optional[dict]:
@@ -324,13 +412,19 @@ def auto_quality(assignment: dict) -> bool:
 
 
 def _by_id(rows: Iterable[dict]) -> dict[str, dict]:
-    return {str(row.get("id")): row for row in rows if row.get("id")}
+    out = {}
+    for row in rows:
+        item_id = str(row.get("chosen_id") or row.get("id") or "")
+        if item_id:
+            out[item_id] = row
+    return out
 
 
 def report() -> dict:
     items = load_items()
     queue = load_queue()
-    assignments = _by_id(load_assignments())
+    assignments = _by_id(load_decisions())
+    assignments.update(_by_id(load_outcomes()))
     latest = _latest_labels()
     labeled_n = sum(1 for row in queue if row.get("id") in latest)
     remaining = len(queue) - labeled_n
@@ -340,7 +434,7 @@ def report() -> dict:
     by_arm = {arm: {"n": 0, "human_ok": 0, "technical_ok": 0} for arm in ARMS}
     for row in items:
         assigned = assignments.get(str(row.get("id") or ""), {})
-        arm = assigned.get("arm")
+        arm = normalize_arm(assigned.get("arm"))
         if arm in by_arm:
             by_arm[arm]["n"] += 1
             if assigned.get("technical_success") is True:
@@ -354,7 +448,7 @@ def report() -> dict:
         compared += 1
         if label.get("quality_success"):
             human_ok += 1
-            arm = assigned.get("arm")
+            arm = normalize_arm(assigned.get("arm"))
             if arm in by_arm:
                 by_arm[arm]["human_ok"] += 1
         if bool(label.get("quality_success")) == auto_quality(assigned):
@@ -407,16 +501,35 @@ def _parse_ts(value: Any) -> Optional[datetime]:
 def audit(*, expected_posts: int = EXPECTED_POSTS_PER_DAY, hours: int = 24) -> dict:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     items = [row for row in load_items() if (_parse_ts(row.get("posted_at")) or cutoff) >= cutoff]
-    assignments = load_assignments()
+    outcomes = [
+        row
+        for row in load_outcomes()
+        if (_parse_ts(row.get("assigned_at")) or cutoff) >= cutoff
+    ]
+    decisions = [
+        row
+        for row in load_decisions()
+        if (_parse_ts(row.get("decided_at")) or cutoff) >= cutoff
+    ]
     runs = [row for row in load_runs() if (_parse_ts(row.get("recorded_at")) or cutoff) >= cutoff]
     attempted = sum(int(row.get("attempted") or 0) for row in runs)
     posted_runs = sum(int(row.get("posted") or 0) for row in runs)
     failed_runs = sum(int(row.get("failed") or 0) for row in runs)
+    item_ids = {str(row.get("id")) for row in items if row.get("id")}
+    decision_ids = {str(row.get("chosen_id") or row.get("id")) for row in decisions}
+    outcome_ids = {str(row.get("chosen_id") or row.get("id")) for row in outcomes}
     alarms = []
-    if len(items) != len({row.get("id") for row in items}):
+    if len(items) != len(item_ids):
         alarms.append("duplicate_item_ids")
-    if len(items) != len([row for row in assignments if (_parse_ts(row.get("assigned_at")) or cutoff) >= cutoff]):
+    if item_ids != outcome_ids:
         alarms.append("items_assignments_mismatch")
+    missing_decision = sorted(item_ids - decision_ids)
+    if missing_decision:
+        alarms.append("posted_without_decision")
+    if any(row.get("kill_switch") for row in decisions):
+        alarms.append("kill_switch")
+    if any(row.get("fallback") for row in decisions):
+        alarms.append("ranker_fallback")
     if attempted and posted_runs + failed_runs != attempted:
         alarms.append("run_counts_inconsistent")
     if len(items) < expected_posts - 1:
@@ -428,11 +541,14 @@ def audit(*, expected_posts: int = EXPECTED_POSTS_PER_DAY, hours: int = 24) -> d
         "hours": hours,
         "expected_posts": expected_posts,
         "items": len(items),
-        "assignments": len(assignments),
+        "outcomes": len(outcomes),
+        "decisions": len(decisions),
+        "assignments": len(load_assignments()),
         "runs": len(runs),
         "attempted": attempted,
         "posted_runs": posted_runs,
         "failed_runs": failed_runs,
+        "posted_without_decision": missing_decision,
         "alarms": alarms,
         "success_definition": SUCCESS_DEFINITION,
     }
@@ -503,19 +619,31 @@ def main(argv=None) -> int:
     if args.cmd == "next":
         card = next_card()
         if card is None:
-            print("queue empty")
+            status = queue_status()
+            last = status["last_enqueue"] or "never"
+            print(
+                "No unlabeled items in the blind sample. "
+                f"Last enqueue: {last}. "
+                f"Posted items: {status['posted']}. "
+                f"Sampled: {status['sampled']}. "
+                f"Labeled: {status['labeled']}."
+            )
             return 0
         _print_card(card)
         return 0
     if args.cmd == "label":
-        payload = record_label(
-            args.id,
-            relevant=parse_bool(args.relevant),
-            duplicate=parse_bool(args.duplicate),
-            needs_correction=parse_bool(args.needs_correction),
-            notes=args.notes,
-            rater=args.rater,
-        )
+        try:
+            payload = record_label(
+                args.id,
+                relevant=parse_bool(args.relevant),
+                duplicate=parse_bool(args.duplicate),
+                needs_correction=parse_bool(args.needs_correction),
+                notes=args.notes,
+                rater=args.rater,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         print(json.dumps(payload, indent=2))
         return 0
     if args.cmd == "report":
