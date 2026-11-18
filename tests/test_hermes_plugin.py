@@ -73,6 +73,30 @@ def test_build_operation_maps_web_extract():
     assert "args" not in payload
 
 
+def test_build_operation_maps_webclaw_scrape():
+    payload = hermes_plugin.build_operation(
+        tool_name="mcp_webclaw_webclaw_scrape",
+        args={"url": "https://agentcursus.nl/page"},
+        status="ok",
+    )
+    assert payload["task_id"] == "choose-scrape-strategy"
+    assert payload["action_id"] == "mcp_webclaw_webclaw_scrape"
+    assert payload["target"] == "https://agentcursus.nl/page"
+    assert payload["success"] is True
+
+
+def test_timeout_is_failure():
+    payload = hermes_plugin.build_operation(
+        tool_name="mcp_webclaw_webclaw_scrape",
+        args={"url": "https://example.com/slow"},
+        status="timeout",
+    )
+    assert payload["task_id"] == "choose-scrape-strategy"
+    assert payload["success"] is False
+    assert payload["metadata"]["hermes_status"] == "timeout"
+    assert payload["metadata"]["tool_ok"] is False
+
+
 def test_build_operation_skips_empty_tool():
     assert hermes_plugin.build_operation(tool_name="  ") is None
 

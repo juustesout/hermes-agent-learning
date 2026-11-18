@@ -44,6 +44,7 @@ _TOOL_TASK = {
     "web_search": "web-research",
     "web_extract": "choose-scrape-strategy",
     "browser_navigate": "choose-scrape-strategy",
+    "mcp_webclaw_webclaw_scrape": "choose-scrape-strategy",
 }
 
 
