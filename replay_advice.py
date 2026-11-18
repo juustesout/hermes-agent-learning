@@ -132,7 +132,7 @@ def load_snapshot_file(path: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def replay(episodes: list[dict], snapshot: dict) -> list[dict]:
+def replay(episodes: list[dict], snapshot: dict, *, opslog_ids: set | None = None) -> list[dict]:
     history: list[dict] = []
     out: list[dict] = []
     for ep in episodes:
@@ -148,15 +148,18 @@ def replay(episodes: list[dict], snapshot: dict) -> list[dict]:
         probs = advice.get("probabilities") or {}
         if not isinstance(probs, dict):
             probs = {}
+        ep_id = str(ep.get("id") or "")
+        is_orphan = bool(opslog_ids is not None and ep_id not in opslog_ids)
         out.append(
             {
-                "id": str(ep.get("id") or ""),
+                "id": ep_id,
                 "target": target,
                 "created_at": created_at,
                 "requested_tool": action_id,
                 "advised_tool": str(advice.get("advised_tool") or ""),
                 "probabilities": {str(k): float(v) for k, v in probs.items()},
                 "context_features": used,
+                "is_orphan": is_orphan,
             }
         )
         known = outcome_success(str(ep.get("execution_status") or ""))
@@ -231,6 +234,7 @@ def build_report(
     task_id: str,
     min_n: int,
     skipped: dict | None = None,
+    orphans_excluded: int = 0,
 ) -> dict:
     status = gate(rows, min_n=min_n)
     track = list(PRE_CALL_FEATURE_NAMES)
@@ -250,6 +254,7 @@ def build_report(
         "skipped_no_host": int(skip.get("skipped_no_host") or 0),
         "skipped_wrong_task": int(skip.get("skipped_wrong_task") or 0),
         "skipped_samples": list(skip.get("skipped_samples") or []),
+        "orphans_excluded": orphans_excluded,
         "task_id": task_id,
         "policy_id": str(snapshot.get("id") or ""),
         "policy_version": snapshot.get("version"),
@@ -262,6 +267,8 @@ def build_report(
 def human_line(report: dict) -> str:
     state = "open" if report.get("gate_open") else "closed"
     top = report.get("top_action") or "-"
+    orphans = report.get("orphans_excluded", 0)
+    orphan_tag = f"  orphans={orphans}" if orphans else ""
     return (
         f"gate={state}  exit={exit_code(report)}  "
         f"n={report.get('n')}/{report.get('min_n')}  "
@@ -269,7 +276,7 @@ def human_line(report: dict) -> str:
         f"top={top} {float(report.get('top_share') or 0):.2f}  "
         f"margin={float(report.get('mean_top_margin') or 0):.4f}  "
         f"skipped_no_host={report.get('skipped_no_host', 0)}  "
-        f"skipped_wrong_task={report.get('skipped_wrong_task', 0)}"
+        f"skipped_wrong_task={report.get('skipped_wrong_task', 0)}{orphan_tag}"
     )
 
 
@@ -306,6 +313,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"corpus error: {exc}", file=sys.stderr)
         return 1
     episodes, skipped = eligibility.classify_rows(raw, task_id=args.task_id)
+    # Load opslog IDs to detect orphans
+    opslog_ids: set = set()
+    opslog_path = os.path.join(opslog.STORE_DIR, "operations.jsonl")
+    if os.path.isfile(opslog_path):
+        for row in _read_jsonl(opslog_path):
+            rid = str(row.get("id") or "")
+            if rid:
+                opslog_ids.add(rid)
     try:
         if args.snapshot:
             if not os.path.isfile(args.snapshot):
@@ -321,13 +336,15 @@ def main(argv: list[str] | None = None) -> int:
         print("snapshot missing", file=sys.stderr)
         return 4
     try:
-        rows = replay(episodes, snapshot)
+        rows = replay(episodes, snapshot, opslog_ids=opslog_ids or None)
+        orphan_count = sum(1 for r in rows if r.get("is_orphan"))
         report = build_report(
             rows,
             snapshot=snapshot,
             task_id=args.task_id,
             min_n=args.min_n,
             skipped=skipped,
+            orphans_excluded=orphan_count,
         )
     except FeatureNameMismatch as cop:
         print(str(cop), file=sys.stderr)

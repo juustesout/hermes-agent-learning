@@ -165,11 +165,22 @@ def build_operation(
     target = extract_target(args)
     context_features = None
     try:
-        import features as feature_register
-
-        context_features = feature_register.advice_features(raw_target, action_id=name)
-    except Exception:
-        context_features = None
+        from .. import features as feature_register
+    except ImportError:
+        try:
+            import features as feature_register
+        except Exception:
+            feature_register = None
+    if feature_register is not None:
+        try:
+            context_features = feature_register.advice_features(raw_target, action_id=name)
+        except Exception as exc:
+            context_features = None
+            try:
+                if opslog is not None:
+                    opslog.record_health(ok=False, error=f"features: {exc}")
+            except Exception:
+                pass
     return {
         "task_id": task_id_for_tool(name),
         "action_id": name,

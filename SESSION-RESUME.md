@@ -1,0 +1,54 @@
+# Session Resume — 18 november 2026
+
+## Wat is er gebeurd
+
+- **opslog-consolidate cron** herpland 03:00 → 20:00 (slaapstand probleem)
+- **consolidatie** gedraaid: 105 episodes, retentie 30→90 dagen
+- **Backfill**: 6 webclaw-scrapes her-labeld naar choose-scrape-strategy
+- **Track A features** geïmplementeerd en getest (10-dim, pre-call only)
+- **Replay gate** gebouwd en getest (9 eligible URL-episodes, 12 nodig)
+- **Scripts** verplaatst naar `scripts/ops/` + 7 nieuwe tests
+
+## Huidige stand
+
+| Item | Status |
+|------|--------|
+| Gate: URL-episodes | 9 / 12 (exit 3) |
+| Replay adviesvariatie | 2 uniek (overig/code) |
+| Weeskinderen | 20 (1 URL-dragend: 0d846871) |
+| Plugin features runtime | LEEG — features.py niet importeerbaar |
+| Retentie opslog | 90 dagen (default) |
+| Test suite | 210 passed |
+| Policy snapshot | Track A, versie 1, 3 acties |
+
+## Open punten
+
+1. Plugin kan `features.py` niet laden (verschillende PYTHONPATH) → context_features altijd leeg
+2. Nog 3 URL-scrapes nodig voor gate open (min_n=12)
+3. Weeskind 0d846871 heeft geen traceerbare bron-operatie (nooit in backup geweest)
+4. Meetperiode kan pas starten na gate open + replay niet-constant
+5. `wordpressagent.nl` moet nog opgebouwd worden
+
+## Scripts locatie
+
+- `scripts/ops/backfill_webclaw_task.py`
+- `scripts/ops/diagnose_store.py`
+- `scripts/ops/tests/test_ops_scripts.py`
+- `scripts/ops/BACKFILL-LOG.md`
+
+## Commando's voor volgende keer
+
+```bash
+# Gate check
+cd /opt/data/profiles/operator/agent-learning
+python3 replay_advice.py
+
+# Consolidatie
+PATH="/opt/hermes/.venv/bin:$PATH" python3 consolidate_ops.py --run
+
+# Training (na voldoende episodes)
+PATH="/opt/hermes/.venv/bin:$PATH" python3 train_adaptive.py --agent-id hermes --task-id choose-scrape-strategy
+
+# Diagnose
+python3 scripts/ops/diagnose_store.py
+```
