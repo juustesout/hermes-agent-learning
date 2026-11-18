@@ -33,7 +33,10 @@ class FakeCtx:
 def test_register_hook_and_cli():
     ctx = FakeCtx()
     hermes_plugin.register(ctx)
-    assert ctx.hooks == [("post_tool_call", hermes_plugin.on_post_tool_call)]
+    assert ctx.hooks == [
+        ("pre_tool_call", hermes_plugin.on_pre_tool_call),
+        ("post_tool_call", hermes_plugin.on_post_tool_call),
+    ]
     assert len(ctx.cli) == 1
     assert ctx.cli[0]["name"] == "agent-learning"
 
@@ -41,7 +44,8 @@ def test_register_hook_and_cli():
 def test_register_without_cli_command():
     ctx = FakeCtx(with_cli=False)
     hermes_plugin.register(ctx)
-    assert ctx.hooks[0][0] == "post_tool_call"
+    assert ctx.hooks[0][0] == "pre_tool_call"
+    assert ctx.hooks[1][0] == "post_tool_call"
     assert ctx.cli == []
 
 
@@ -173,5 +177,6 @@ def test_repo_root_plugin_layout():
     assert (root / "plugin.yaml").is_file()
     assert (root / "__init__.py").is_file()
     text = (root / "plugin.yaml").read_text()
+    assert "pre_tool_call" in text
     assert "post_tool_call" in text
     assert "name: agent-learning" in text

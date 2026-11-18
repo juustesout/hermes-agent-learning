@@ -138,6 +138,7 @@ contain untrusted values (for example custom `action_id` strings).
 │                              #   (workflow, node, episode, reward, case)
 ├── schema/workflow.schema.json  # compat alias → skill_schema/schemas/skill.schema.json
 ├── hermes_plugin/             # Hermes observer — standaard sinds 17 Nov 2026
+├── shadow_policy.py           # Shadow advisor: snapshot read + decision log
 │
 ├── cron_workflow.sh           # Daily cron: train + run + dashboard
 ├── train_scrape_policy.sh     # Every-6h cron: scrape policy training
@@ -146,7 +147,9 @@ contain untrusted values (for example custom `action_id` strings).
 │   ├── episodes/
 │   ├── policies/
 │   ├── rewards/
-│   └── runs/
+│   ├── runs/
+│   ├── operations.jsonl
+│   └── shadow_decisions.jsonl
 ├── docs/                      # Documentatie voor andere agents/developers
 │   └── hermes-skill.md        # SKILL.md snapshot (Hermes skill store is source of truth)
 └── pyproject.toml
@@ -182,7 +185,7 @@ naar volwaardige leer-episodes.
 
 | Component | Locatie |
 |-----------|---------|
-| **Hermes plugin** | `hermes_plugin/__init__.py` — `post_tool_call` hook → `opslog.log_operation()` (`source=hermes`) |
+| **Hermes plugin** | `hermes_plugin/__init__.py` — `pre_tool_call` shadow advice + `post_tool_call` → `opslog.log_operation()` (`source=hermes`) |
 | **Automation logger** | `run_log.py` — cron/workflow steps write themselves (`source=automation`) |
 | **Consolidator** | `consolidate_ops.py` — ruwe log → episode + reward |
 | **Live log** | `store/operations.jsonl` (append-only) |
@@ -223,7 +226,9 @@ als basis en accepteren overrides via environment variables:
 
 `hermes_plugin/` is een thin Hermes observer. Hij logt elke Hermes tool-call
 automatisch naar `store/operations.jsonl` via `opslog.log_operation()`.
-Geen handmatige logging meer nodig.
+`pre_tool_call` also records what the active policy would advise
+(`store/shadow_decisions.jsonl`) and always returns `None`. Shadow mode
+does not block, modify, or swap tools.
 
 Enabling the plugin is the opt-in. Tool-call success (`status == ok`) is not
 user-task success; metadata stores `tool_ok` and `task_success=false`.
@@ -260,6 +265,8 @@ the hook is a no-op.
 | `AGENT_LEARNING_OPSLOG_RETENTION_DAYS` | `30` | Drop older operations; `0` disables prune |
 | `AGENT_LEARNING_TOOL_TASK_MAP` | built-in web tools | JSON object `{tool_name: task_id}` |
 | `AGENT_LEARNING_TOOL_TASK_MAP_FILE` | unset | JSON file with the same mapping |
+| `AGENT_LEARNING_SHADOW_ENABLED` | `1` | Set `0` to skip shadow advice |
+| `AGENT_LEARNING_SHADOW_KILL` | unset | Set `1` to disable shadow advice without a code change |
 
 Logged fields: `task_id`, `action_id`, redacted `target` (query strings stripped),
 redacted error summary, latency, tool status. No tool results. Session ids are
