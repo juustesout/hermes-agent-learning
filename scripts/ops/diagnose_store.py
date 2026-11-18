@@ -14,16 +14,17 @@ from __future__ import annotations
 import json
 import os
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, _ROOT)
 from features import pre_call_features, host_from_url
+import opslog
 
 STORE_DIR = (
     os.environ.get("AGENT_LEARNING_OPSLOG_DIR")
     or os.environ.get("AGENT_LEARNING_LOCAL_STORE_DIR")
-    or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "store")
+    or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "store")
 )
 OPSLOG = os.path.join(STORE_DIR, "operations.jsonl")
 EPISODES_DIR = os.path.join(STORE_DIR, "episodes", "hermes")
@@ -69,47 +70,45 @@ def has_host(target: str) -> bool:
 # ── 1. Integriteit ──────────────────────────────────────────
 
 print("=" * 60)
-print("1. REGEL-INTEGRITEIT")
+print("1. OPSLOG vs EPISODES INTEGRITEIT")
 print("=" * 60)
 
 current = load_ops(OPSLOG)
 before = load_ops(BACKUP) if os.path.isfile(BACKUP) else []
-
-total_c = len(current)
-unique_c = len({op.get("id") for op in current})
-total_b = len(before)
-unique_b = len({op.get("id") for op in before})
-
-print(f"  Huidig:   {total_c} regels, {unique_c} unieke IDs ({total_c - unique_c} duplicaten)")
-if before:
-    print(f"  Backup:   {total_b} regels, {unique_b} unieke IDs ({total_b - unique_b} duplicaten)")
-    print(f"  Verschil: {total_c - total_b} regels")
-    if total_c != total_b:
-        print(f"  ⚠ REGEL-AANTAL VERSCHILT — backfill verandert alleen task_id.")
-        # Zoek nieuwe IDs die niet in backup zaten
-        backup_ids = {op.get("id") for op in before}
-        new_ids = [op.get("id") for op in current if op.get("id") not in backup_ids]
-        print(f"  Nieuwe IDs niet in backup: {len(new_ids)}")
-        if new_ids:
-            new_ops = [op for op in current if op.get("id") in set(new_ids)]
-            by_action = Counter(op.get("action_id", "?") for op in new_ops)
-            print(f"  Nieuwe operaties per action:")
-            for act, n in by_action.most_common():
-                print(f"    {act}: {n}")
-
-# Taak-verdeling
-by_task = Counter(op.get("task_id", "?") for op in current)
-print(f"\n  Task-verdeling (huidig):")
-for tid, n in by_task.most_common():
-    print(f"    {tid}: {n}")
-
-# URL-dragend in de target task — tel episodes (replay-bron), niet opslog
 episodes = load_episodes()
-ep_url = [ep for ep in episodes if ep.get("task_id") == TASK and has_host(str(ep.get("target", "")))]
-print(f"\n  URL-dragend in {TASK} (episodes): {len(ep_url)}")
-# Ook uit opslog ter vergelijking
-url_ops = [op for op in current if op.get("task_id") == TASK and has_host(str(op.get("target", "")))]
-print(f"  URL-dragend in {TASK} (opslog):   {len(url_ops)}")
+
+op_ids = {op["id"] for op in current}
+ep_ids = {ep["id"] for ep in episodes}
+in_both = op_ids & ep_ids
+only_ops = op_ids - ep_ids
+only_eps = ep_ids - op_ids
+
+print(f"  opslog IDs:      {len(op_ids)}")
+print(f"  episode IDs:     {len(ep_ids)}")
+print(f"  in beide:        {len(in_both)}")
+print(f"  alleen opslog:   {len(only_ops)}")
+print(f"  weeskinderen:    {len(only_eps)}")
+
+if only_eps:
+    url_orphans = []
+    other_orphans = []
+    for ep_id in sorted(only_eps)[:10]:
+        ep = [e for e in episodes if e["id"] == ep_id][0]
+        host = has_host(str(ep.get("target","") or ""))
+        tag = "URL" if host else "geen-host"
+        if host:
+            url_orphans.append(ep_id)
+        else:
+            other_orphans.append(ep_id)
+        print(f"    {ep_id[:8]} task={ep.get('task_id','?')} {tag} ts={str(ep.get('created_at',''))[:19]}")
+    if len(only_eps) > 10:
+        print(f"    ... +{len(only_eps) - 10} meer")
+    url_count_in_orphans = len(url_orphans)
+    print(f"    Waarvan URL-dragend: {url_count_in_orphans}")
+    print(f"    Waarvan geen host:   {len(other_orphans)}")
+    print(f"  ⚠ Weeskinderen bestaan. Retentie: {opslog.retention_days()}d. ")
+else:
+    url_count_in_orphans = 0
 
 # ── 2. Temporele integriteit ────────────────────────────────
 
@@ -264,10 +263,8 @@ if issues > 0:
     print(f"  ⚠ Temporele lekken: {issues}")
 else:
     print("  ✅ Temporele integriteit: ok")
-if total_c != total_b and before:
-    print(f"  ⚠ Regel-aantal versprong: {total_b} → {total_c}")
-else:
-    print("  ✅ Regel-aantal stabiel")
+print(f"  Weeskinderen: {len(only_eps)} (URL-dragend: {url_count_in_orphans})")
+
 if n_distinct < 2:
     print(f"  ❌ Gate blijft dicht (constant advies, n={len(advised)})")
     print(f"     Benodigd: minstens 2 verschillende adviezen over >=12 URLs")

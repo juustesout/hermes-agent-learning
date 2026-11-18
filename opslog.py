@@ -46,7 +46,7 @@ def default_store_dir() -> str:
 
 
 def retention_days() -> int:
-    raw = os.environ.get("AGENT_LEARNING_OPSLOG_RETENTION_DAYS", "30").strip()
+    raw = os.environ.get("AGENT_LEARNING_OPSLOG_RETENTION_DAYS", "90").strip()
     try:
         return int(raw)
     except ValueError:

@@ -19,7 +19,7 @@ from shutil import copy2
 STORE_DIR = (
     os.environ.get("AGENT_LEARNING_OPSLOG_DIR")
     or os.environ.get("AGENT_LEARNING_LOCAL_STORE_DIR")
-    or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "store")
+    or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "store")
 )
 OPSLOG = os.path.join(STORE_DIR, "operations.jsonl")
 BACKUP = OPSLOG + f".backup-{date.today().isoformat()}"
