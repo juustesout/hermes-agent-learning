@@ -23,6 +23,7 @@ from agent_learning.policy.softmax_bandit import SoftmaxPolicy
 from agent_learning.types import ConsumedInput, Episode, Reward, RewardSource
 
 from adaptive_learner import AdaptiveBanditLearner
+from eligibility import SCRAPE_TASK_ID, eligible_scrape
 from features import PRE_CALL_FEATURE_NAMES, phi_vector, pre_call_features
 
 
@@ -79,7 +80,11 @@ class ContextualAdaptiveBanditLearner(AdaptiveBanditLearner):
                     row[j] *= self._logit_decay
 
         # ---- Step 2: Analyseer episodes voor failure detection -------------
-        episode_list = list(episodes)
+        episode_list = [
+            ep
+            for ep in episodes
+            if getattr(ep, "task_id", "") != SCRAPE_TASK_ID or eligible_scrape(ep)
+        ]
         recent = episode_list[-self._failure_threshold * 5:]
         failures = 0
         total = len(recent)

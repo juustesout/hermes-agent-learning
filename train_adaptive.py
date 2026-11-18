@@ -36,6 +36,7 @@ from agent_learning.training.runner import LearningRunner
 
 from adaptive_learner import AdaptiveBanditLearner
 from contextual_learner import ContextualAdaptiveBanditLearner
+from eligibility import SCRAPE_TASK_ID, eligible_scrape
 
 
 def _is_contextual(snapshot) -> bool:
@@ -78,6 +79,11 @@ def main() -> int:
         start_date=args.start_date, end_date=args.end_date, full_only=False,
     )
     episode_limits = Counter(ep.task_id for ep in selected_episodes)
+    eligible_limits = Counter(
+        ep.task_id
+        for ep in selected_episodes
+        if ep.task_id != SCRAPE_TASK_ID or eligible_scrape(ep)
+    )
     results = []
     skipped = []
 
@@ -88,10 +94,23 @@ def main() -> int:
             continue
 
         n_eps = episode_limits.get(task_id, 0)
-        if n_eps == 0:
+        n_eligible = eligible_limits.get(task_id, 0)
+        if task_id == SCRAPE_TASK_ID:
+            if n_eligible == 0:
+                skipped.append({"task_id": task_id, "reason": "no eligible scrape episodes"})
+                continue
+            if n_eligible < args.min_episodes:
+                skipped.append(
+                    {
+                        "task_id": task_id,
+                        "reason": f"batch has {n_eligible} eligible eps; min {args.min_episodes}",
+                    }
+                )
+                continue
+        elif n_eps == 0:
             skipped.append({"task_id": task_id, "reason": "no episodes in selected batch"})
             continue
-        if n_eps < args.min_episodes:
+        elif n_eps < args.min_episodes:
             skipped.append({"task_id": task_id, "reason": f"batch has {n_eps} eps; min {args.min_episodes}"})
             continue
 
@@ -100,7 +119,7 @@ def main() -> int:
         policy_cls = ContextualSoftmaxPolicy if contextual else SoftmaxPolicy
         policy = policy_cls.from_snapshot(snapshot)
 
-        print(f"\n=== Task: {task_id} ({n_eps} episodes) ===")
+        print(f"\n=== Task: {task_id} ({n_eps} episodes, {n_eligible} eligible) ===")
         print(f"Policy: {'ContextualSoftmax' if contextual else 'Softmax (marginal)'}")
         print(f"Learner: {type(learner).__name__}")
         print(f"  logit_decay={learner.logit_decay}, failure_threshold={learner.failure_threshold}")
