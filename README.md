@@ -140,6 +140,7 @@ contain untrusted values (for example custom `action_id` strings).
 ├── hermes_plugin/             # Hermes observer — standaard sinds 17 Nov 2026
 ├── shadow_policy.py           # Shadow advisor: snapshot read + decision log
 ├── features.py                # Track A pre-call / Track B post-fetch register
+├── FEATURES.md                # How Track A/B work; what is not built yet
 │
 ├── cron_workflow.sh           # Daily cron: train + run + dashboard
 ├── train_scrape_policy.sh     # Every-6h cron: scrape policy training
