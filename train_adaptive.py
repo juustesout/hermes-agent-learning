@@ -106,9 +106,12 @@ def main() -> int:
         print(f"  logit_decay={learner.logit_decay}, failure_threshold={learner.failure_threshold}")
 
         if contextual:
-            from scrape_features import FEATURE_NAMES
-            phi = [0.0] * policy.feature_dim
-            probs_before = policy.probabilities(phi)
+            from features import PRE_CALL_FEATURE_NAMES, phi_vector
+
+            phi = phi_vector({}, PRE_CALL_FEATURE_NAMES)
+            if len(phi) < policy.feature_dim:
+                phi = phi + [0.0] * (policy.feature_dim - len(phi))
+            probs_before = policy.probabilities(phi[: policy.feature_dim])
         else:
             probs_before = policy.probabilities()
         print(f"  probs BEFORE: {dict(zip([a.id for a in snapshot.actions], [f'{p:.2%}' for p in probs_before]))}")

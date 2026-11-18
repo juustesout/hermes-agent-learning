@@ -23,7 +23,7 @@ from agent_learning.policy.contextual_softmax import ContextualSoftmaxPolicy
 from agent_learning.storage.cosmos import get_default_store
 from agent_learning.types import Action, PolicySnapshot
 
-from scrape_features import FEATURE_DIM, FEATURE_NAMES
+from features import PRE_CALL_FEATURE_DIM, PRE_CALL_FEATURE_NAMES
 
 
 def main() -> int:
@@ -60,26 +60,26 @@ def main() -> int:
 
     policy = ContextualSoftmaxPolicy.from_actions(
         actions,
-        feature_dim=FEATURE_DIM,
+        feature_dim=PRE_CALL_FEATURE_DIM,
         agent_id="hermes",
         task_id="choose-scrape-strategy",
     )
 
-    # Sla feature-namen op in metadata voor inspectie
-    policy._snapshot.metadata["feature_names"] = FEATURE_NAMES
+    policy._snapshot.metadata["feature_names"] = list(PRE_CALL_FEATURE_NAMES)
+    policy._snapshot.metadata["feature_track"] = "pre_call"
     policy._snapshot.metadata["policy_kind"] = "contextual_softmax"
     policy._snapshot.metadata["decision_context"] = (
-        "Choose a web scraping strategy based on site characteristics. "
-        "Context features: cloudflare, js_heavy, is_wordpress, is_elementor, "
-        "content_len_norm, requires_antibot, site_known, has_structured_data."
+        "Choose a web scraping strategy from pre-call URL and domain-memory "
+        "features. Track A: url_host_category, url_path_depth, url_has_query, "
+        "domain_seen_count, domain_last_success, domain_prior_rate."
     )
 
     # Sla op in store (store_policy saved + activeert)
     store.store_policy(policy._snapshot)
 
     print(f"ContextualSoftmaxPolicy geinitialiseerd ✅")
-    print(f"  feature_dim: {FEATURE_DIM}")
-    print(f"  features: {FEATURE_NAMES}")
+    print(f"  feature_dim: {PRE_CALL_FEATURE_DIM}")
+    print(f"  features: {PRE_CALL_FEATURE_NAMES}")
     print(f"  actions: {[a.id for a in actions]}")
     print(f"  snapshot_id: {policy._snapshot.id}")
     print(f"  policy_kind: contextual_softmax")

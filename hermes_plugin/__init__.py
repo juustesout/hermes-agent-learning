@@ -154,16 +154,32 @@ def build_operation(
         metadata["session_id"] = session_id or ""
         metadata["turn_id"] = turn_id or ""
         metadata["tool_call_id"] = tool_call_id or ""
+    raw_target = ""
+    if isinstance(args, dict):
+        for key in _TARGET_KEYS:
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                raw_target = value.strip()
+                break
+    target = extract_target(args)
+    context_features = None
+    try:
+        import features as feature_register
+
+        context_features = feature_register.advice_features(raw_target, action_id=name)
+    except Exception:
+        context_features = None
     return {
         "task_id": task_id_for_tool(name),
         "action_id": name,
-        "target": extract_target(args),
+        "target": target,
         "success": outcome == "ok",
         "duration_ms": latency,
         "summary": summarize_tool_call(
             tool_name=name, status=outcome, error_message=error_message
         ),
         "action_type": name,
+        "context_features": context_features,
         "metadata": metadata,
     }
 
@@ -215,6 +231,7 @@ def on_post_tool_call(**kwargs) -> None:
                 tool_call_id=str(kwargs.get("tool_call_id") or ""),
                 status=str(kwargs.get("status") or ""),
                 duration_ms=kwargs.get("duration_ms"),
+                result=kwargs.get("result"),
             )
     except Exception as exc:
         _health_error(exc)

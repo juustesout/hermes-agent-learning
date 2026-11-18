@@ -23,6 +23,7 @@ from agent_learning.policy.softmax_bandit import SoftmaxPolicy
 from agent_learning.types import ConsumedInput, Episode, Reward, RewardSource
 
 from adaptive_learner import AdaptiveBanditLearner
+from features import PRE_CALL_FEATURE_NAMES, phi_vector, pre_call_features
 
 
 # Naam in episode metadata / context_features voor de feature vector
@@ -238,24 +239,21 @@ class ContextualAdaptiveBanditLearner(AdaptiveBanditLearner):
     # ------------------------------------------------------------------
 
     def _extract_phi(self, episode: Episode, expected_dim: int) -> np.ndarray:
-        """Haal context vector uit episode, met fallback naar zeros."""
+        """Haal Track A vector uit episode, aligned op het featureregister."""
         ctx = episode.context_features
         if not ctx:
             ctx = episode.metadata.get(_CONTEXT_KEY, {})
         if not isinstance(ctx, dict) or not ctx:
-            return np.zeros(expected_dim, dtype=np.float64)
-
-        # Sorteer op feature name voor determinisme
-        keys = sorted(ctx.keys())
-        phi = np.zeros(expected_dim, dtype=np.float64)
-        for i, key in enumerate(keys):
-            if i >= expected_dim:
-                break
-            try:
-                phi[i] = float(ctx[key])
-            except (ValueError, TypeError):
-                phi[i] = 0.0
-        return phi
+            target = getattr(episode, "target", "") or ""
+            if target:
+                ctx = pre_call_features(target, at=getattr(episode, "created_at", None))
+            else:
+                return np.zeros(expected_dim, dtype=np.float64)
+        names = list(PRE_CALL_FEATURE_NAMES)
+        vec = phi_vector(ctx, names)
+        if len(vec) < expected_dim:
+            vec = vec + [0.0] * (expected_dim - len(vec))
+        return np.asarray(vec[:expected_dim], dtype=np.float64)
 
     def _importance_weight(
         self,
