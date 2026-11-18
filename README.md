@@ -259,6 +259,22 @@ hermes plugins install . --enable
 hermes plugins doctor . --ci
 ```
 
+Link the whole repository as the plugin (not a subset copy):
+
+```bash
+make install-plugin
+make check-plugin-sync
+```
+
+`make install-plugin` creates a symlink from `HERMES_PLUGIN_DIR`
+(default `~/.hermes/plugins/agent-learning`) to this repo. It does not
+replace an existing directory. Remove the old copy on the Hermes machine
+first if that path already exists.
+
+`make check-plugin-sync` is the drift check. Run it on the Hermes machine
+after every install or code change. CI only smoke-tests that install can
+create the symlink; it cannot see the live Hermes plugin path.
+
 Keep the repo importable (`PYTHONPATH=<repo>`, `AGENT_LEARNING_REPO=<repo>`,
 or `pip install -e .`) so the hook can import `opslog`. If `opslog` is missing,
 the hook is a no-op.
@@ -291,7 +307,16 @@ hermes agent-learning stats
 hermes agent-learning count
 hermes agent-learning health
 hermes agent-learning tail -n 20
+hermes agent-learning status
+hermes agent-learning selftest
 ```
+
+`status` is one text block: hooks, feature import, opslog counts, last
+consolidatie, replay-gate. No JSON, no LLM-call, no tool-call.
+
+`selftest` runs the real `pre_tool_call` / `post_tool_call` hooks with
+Hermes kwargs against a temporary store. It never writes the live store.
+There is no CLI hook mode and no marker in tool output.
 
 ## Blind labels (HN evidence)
 

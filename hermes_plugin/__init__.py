@@ -37,6 +37,10 @@ except Exception:  # pragma: no cover - fail-open when kernel is absent
 
 PLUGIN_NAME = "agent-learning"
 DEFAULT_TASK_ID = "hermes-tool"
+HOOKS_REGISTERED: dict[str, bool] = {
+    "pre_tool_call": False,
+    "post_tool_call": False,
+}
 _SUMMARY_MAX = 500
 _TARGET_MAX = 300
 _TARGET_KEYS = ("url", "uri", "path", "query", "target", "href")
@@ -272,13 +276,24 @@ def on_post_tool_call(**kwargs) -> None:
             )
     except Exception as exc:
         _health_error(exc)
+    return None
 
 
 def _handle_cli(args) -> None:
+    cmd = getattr(args, "al_command", None)
+    if cmd == "status":
+        import plugin_status
+
+        print(plugin_status.format_status(), end="")
+        return
+    if cmd == "selftest":
+        import plugin_status
+
+        print(plugin_status.format_selftest(), end="")
+        return
     if opslog is None:
         print("opslog unavailable", file=sys.stderr)
         return
-    cmd = getattr(args, "al_command", None)
     if cmd == "count":
         print(opslog.count_operations())
         return
@@ -294,7 +309,7 @@ def _handle_cli(args) -> None:
     if cmd == "health":
         print(json.dumps(opslog.health(), indent=2))
         return
-    print("Usage: hermes agent-learning <stats|count|tail|health>")
+    print("Usage: hermes agent-learning <stats|count|tail|health|status|selftest>")
 
 
 def _setup_argparse(subparser) -> None:
@@ -302,6 +317,8 @@ def _setup_argparse(subparser) -> None:
     subs.add_parser("stats", help="Show opslog stats")
     subs.add_parser("count", help="Count logged operations")
     subs.add_parser("health", help="Show opslog write/error health")
+    subs.add_parser("status", help="Show hooks, features, opslog, gate")
+    subs.add_parser("selftest", help="Run hooks against a temporary store")
     p_tail = subs.add_parser("tail", help="Show recent operations")
     p_tail.add_argument("-n", type=int, default=10)
     subparser.set_defaults(func=_handle_cli)
@@ -310,6 +327,8 @@ def _setup_argparse(subparser) -> None:
 def register(ctx) -> None:
     ctx.register_hook("pre_tool_call", on_pre_tool_call)
     ctx.register_hook("post_tool_call", on_post_tool_call)
+    HOOKS_REGISTERED["pre_tool_call"] = True
+    HOOKS_REGISTERED["post_tool_call"] = True
     register_cli = getattr(ctx, "register_cli_command", None)
     if register_cli is not None:
         register_cli(

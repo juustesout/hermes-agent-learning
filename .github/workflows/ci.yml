@@ -67,6 +67,9 @@ jobs:
       - name: Pytest
         run: python -m pytest tests/ -q --tb=short
 
+      - name: Plugin install smoke-test
+        run: python plugin_sync.py install --dest "$HOME/.hermes/plugins/agent-learning"
+
       - name: Holdout baseline
         run: python holdout_eval.py --baseline-only --json
 

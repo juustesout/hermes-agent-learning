@@ -39,6 +39,9 @@
 ## Commando's voor volgende keer
 
 ```bash
+# Plugin drift (Hermes machine, after install or a code change)
+make check-plugin-sync
+
 # Gate check
 cd /opt/data/profiles/operator/agent-learning
 python3 replay_advice.py
