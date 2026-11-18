@@ -140,6 +140,7 @@ def build_operation(
         except (TypeError, ValueError):
             latency = None
     metadata = {
+        "source": "hermes",
         "hermes_status": outcome,
         "tool_ok": outcome == "ok",
         "task_success": False,

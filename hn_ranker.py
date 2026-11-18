@@ -437,12 +437,20 @@ def select_run(
     return decisions
 
 
-def load_decisions() -> list[dict]:
-    return [row for row in blind_label.load_assignments() if row.get("record") == DECISION_RECORD]
+def load_decisions(view: str = "live") -> list[dict]:
+    return [
+        row
+        for row in blind_label._view(blind_label.load_assignments(), view)
+        if row.get("record") == DECISION_RECORD
+    ]
 
 
-def load_outcomes() -> list[dict]:
-    return [row for row in blind_label.load_assignments() if row.get("record") == OUTCOME_RECORD]
+def load_outcomes(view: str = "live") -> list[dict]:
+    return [
+        row
+        for row in blind_label._view(blind_label.load_assignments(), view)
+        if row.get("record") == OUTCOME_RECORD
+    ]
 
 
 def collect_training_rows() -> list[dict]:
@@ -455,6 +463,8 @@ def collect_training_rows() -> list[dict]:
             continue
         outcome = outcomes.get(item_id, {})
         item = items.get(item_id, {})
+        if blind_label.is_sim(decision) or blind_label.is_sim(outcome) or blind_label.is_sim(item):
+            continue
         auto_relevant = outcome.get("auto_relevant")
         if auto_relevant is None:
             auto_relevant = item.get("auto_relevant")
