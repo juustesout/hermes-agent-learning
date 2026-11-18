@@ -123,6 +123,36 @@ def summarize_tool_call(
     return text
 
 
+def _load_features():
+    """Return (module or None, "relative" | "absolute" | None, [import errors]).
+
+    Relative first (works when the plugin loads as a subpackage), absolute as
+    fallback. Every failed attempt is recorded so nothing fails silently.
+    """
+    errors: list[str] = []
+    try:
+        from .. import features as module
+
+        return module, "relative", errors
+    except Exception as exc:
+        errors.append(f"relative: {type(exc).__name__}: {exc}")
+    try:
+        import features as module
+
+        return module, "absolute", errors
+    except Exception as exc:
+        errors.append(f"absolute: {type(exc).__name__}: {exc}")
+    return None, None, errors
+
+
+def _health_error_text(message: str) -> None:
+    try:
+        if opslog is not None:
+            opslog.record_health(ok=False, error=message)
+    except Exception:
+        return
+
+
 def build_operation(
     *,
     tool_name: str = "",
@@ -164,23 +194,18 @@ def build_operation(
                 break
     target = extract_target(args)
     context_features = None
-    try:
-        from .. import features as feature_register
-    except ImportError:
+    feature_register, import_source, import_errors = _load_features()
+    metadata["import_source"] = import_source or "none"
+    if feature_register is None:
+        _health_error_text("features import failed: " + "; ".join(import_errors))
+    else:
         try:
-            import features as feature_register
-        except Exception:
-            feature_register = None
-    if feature_register is not None:
-        try:
-            context_features = feature_register.advice_features(raw_target, action_id=name)
+            context_features = feature_register.pre_call_features(
+                raw_target, action_id=name
+            )
         except Exception as exc:
             context_features = None
-            try:
-                if opslog is not None:
-                    opslog.record_health(ok=False, error=f"features: {exc}")
-            except Exception:
-                pass
+            _health_error_text(f"features: {type(exc).__name__}: {exc}")
     return {
         "task_id": task_id_for_tool(name),
         "action_id": name,
