@@ -143,6 +143,9 @@ contain untrusted values (for example custom `action_id` strings).
 ├── FEATURES.md                # How Track A/B work; what is not built yet
 ├── replay_advice.py           # Offline Track A advice replay (measurement gate)
 ├── REPLAY.md                  # Spec: offline advice replay gate
+├── MVP.md                     # MVP scope and acceptance criteria
+├── MONKEY.md                  # Current work: F first; A/D blocked on hook check
+├── eligibility.py             # Shared eligible_scrape() for replay/train/consolidate/shadow
 │
 ├── cron_workflow.sh           # Daily cron: train + run + dashboard
 ├── train_scrape_policy.sh     # Every-6h cron: scrape policy training
@@ -206,10 +209,10 @@ flags missing or unfinished runs. Podcast/cron wrappers are a follow-up.
 
 | Task-ID | Action-Type |
 |---------|-------------|
-| `choose-scrape-strategy` | web_scrape, web_search |
+| `choose-scrape-strategy` | `web_extract`, `browser_navigate`, `mcp_webclaw_webclaw_scrape` |
 | `db-query` | database_query |
 | `wp-publish` | wp_rest_api |
-| `web-research` | web_search |
+| `web-research` | `web_search` |
 | `podcast-*` | research, script, audio, publish |
 
 ### Cron Schedule

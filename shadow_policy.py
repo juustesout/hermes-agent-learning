@@ -11,8 +11,11 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote
 
+import eligibility
 import features as feature_register
 import opslog
+
+eligible_scrape = eligibility.eligible_scrape
 
 advice_features = feature_register.advice_features
 
@@ -470,6 +473,8 @@ def record_post(
         timestamp=str(row.get("timestamp") or ""),
     )
     _append(row)
-    alarm = feature_register.constant_advisor_status(load_decisions())
+    alarm = feature_register.constant_advisor_status(
+        [row for row in load_decisions() if eligible_scrape(row)]
+    )
     if alarm.get("alarm"):
         _write_shadow_health(alarm)

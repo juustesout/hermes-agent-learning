@@ -113,14 +113,18 @@ def test_gate_open_on_twelve_varied(tmp_path, capsys):
     code = replay_advice.main(
         ["--jsonl", str(jsonl), "--snapshot", str(snap), "--min-n", "12"]
     )
-    report = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
     assert code == 0
     assert report["gate_open"] is True
     assert report["n"] == 12
     assert report["n_distinct"] >= 2
     assert report["policy_id"] == "pol-a"
+    assert report["mean_top_margin"] > 0
+    assert report["skipped_no_host"] == 0
     assert report["rows"][0]["probabilities"]
     assert "use_jina_reader" in report["rows"][0]["probabilities"]
+    assert "gate=open" in captured.err
 
 
 def test_constant_advice_exit_two(tmp_path, capsys):
@@ -215,6 +219,14 @@ def test_later_outcome_does_not_leak_into_earlier_phi():
     )
 
 
+def test_timeout_counts_as_fail_for_memory():
+    assert replay_advice.outcome_success("timeout") is False
+    assert replay_advice.outcome_success("blocked") is False
+    assert replay_advice.outcome_success("cancelled") is False
+    assert replay_advice.outcome_success("ok") is True
+    assert replay_advice.outcome_success("running") is None
+
+
 def test_rows_without_host_do_not_count(tmp_path, capsys):
     rows = _episodes(TWELVE_URLS[:11])
     rows.append(
@@ -232,6 +244,10 @@ def test_rows_without_host_do_not_count(tmp_path, capsys):
     code = replay_advice.main(
         ["--jsonl", str(jsonl), "--snapshot", str(snap), "--min-n", "12"]
     )
-    report = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
     assert code == 3
     assert report["n"] == 11
+    assert report["skipped_no_host"] == 1
+    assert report["skipped_samples"][0]["target"] == "/just/a/path"
+    assert "skipped_no_host=1" in captured.err

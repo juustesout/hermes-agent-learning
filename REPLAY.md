@@ -51,7 +51,7 @@ Velden die de CLI mag lezen:
 | `execution_status` | succes voor in-memory domeinhistorie van latere rijen |
 | `task_id` | filter |
 
-Succes voor historie: `execution_status` in `{completed, success, ok}` is True; `failed` / `error` is False; anders sla de rij over voor geheugen (advies zelf gaat wel door).
+Succes voor historie: `execution_status` in `{completed, success, ok}` is True; `failed` / `error` / `timeout` / `blocked` / `cancelled` is False; anders sla de rij over voor geheugen (advies zelf gaat wel door).
 
 Deze worktree heeft geen `store/` (gitignored). De twaalf bestaande episodes zitten op de machine met de echte store, niet in git. Tests leveren een fixture van twaalf URL-rijen. De gate op een echte run faalt als er minder dan twaalf URL-dragende scrape-episodes zijn. Gebruik dan niet stilletjes de testhulp. Zijn er meer dan twaalf, replay alle gefilterde rijen; twaalf is het minimum, niet het maximum.
 
@@ -111,7 +111,11 @@ Rapportvelden:
   "n_distinct": 1,
   "top_action": "use_jina_reader",
   "top_share": 1.0,
+  "mean_top_margin": 0.02,
   "counts": {"use_jina_reader": 12},
+  "skipped_no_host": 9,
+  "skipped_wrong_task": 0,
+  "skipped_samples": [{"reason": "no_host", "id": "ep-x", "task_id": "choose-scrape-strategy", "target": "/opt/data/file"}],
   "task_id": "choose-scrape-strategy",
   "policy_id": "pol-a",
   "policy_version": 1,
@@ -137,7 +141,11 @@ Rapportvelden:
 
 `policy_id` is `snapshot.id` (het opgeslagen policy-document). `task_id` blijft de taakfilter. Leeg `policy_id` komt alleen voor als het snapshot ontbreekt, en dat is exit 4.
 
-`rows[].probabilities` is altijd `{action_id: prob}` uit `shadow_policy.advise`, nooit `{}`. Daarmee is "bijna constant" (0.51 / 0.49) te onderscheiden van "ruim gewonnen". `rows[].context_features` volgt `PRE_CALL_FEATURE_NAMES`. Geen Track B-sleutels.
+`rows[].probabilities` is altijd `{action_id: prob}` uit `shadow_policy.advise`, nooit `{}`. Daarmee is "bijna constant" (0.51 / 0.49) te onderscheiden van "ruim gewonnen". `mean_top_margin` is het gemiddelde van (hoogste minus tweede) over de replay-rijen. `rows[].context_features` volgt `PRE_CALL_FEATURE_NAMES`. Geen Track B-sleutels.
+
+Rijen zonder host of met een andere `task_id` tellen niet mee voor `n`. Ze verschijnen als `skipped_no_host` / `skipped_wrong_task` plus `skipped_samples`. Filter: `eligibility.eligible_scrape`.
+
+Stderr krijgt altijd een regel: `gate=closed  exit=3  n=3/12  distinct=1  top=...  margin=...`.
 
 ## 6. CLI
 

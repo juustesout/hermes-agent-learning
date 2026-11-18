@@ -73,9 +73,10 @@ Dat geheugen voedt Track A van de *volgende* call, niet de huidige.
 | `shadow_policy.record_pre` | A | advies + log `feature_track` + waarden |
 | `shadow_policy.record_post` | B + geheugen | HTML-features op het record; `remember_outcome` |
 | `hermes_plugin.build_operation` | A | `context_features` op de opslog-rij (`source=hermes`) |
-| `contextual_learner._extract_phi` | A | training aligned op `PRE_CALL_FEATURE_NAMES` |
+| `contextual_learner._extract_phi` | A | training aligned op `PRE_CALL_FEATURE_NAMES`; skipt ineligible scrape-rows |
+| `eligibility.eligible_scrape` | filter | één regel voor replay, train, consolidate, shadow-health |
 | `init_contextual_policy.py` | A | nieuw snapshot, `feature_track=pre_call` |
-| `train_adaptive.py` | A | zero-vector in Track A-volgorde voor probs-print |
+| `train_adaptive.py` | A | zero-vector in Track A-volgorde; skipt ineligible scrape-rows |
 | `holdout_eval.py` | B (oud) | nog `scrape_features.SITE_PROFILES` |
 
 Oud 8-dim snapshot (cloudflare/js/...) is ongeldig voor advies. Hertrain:
