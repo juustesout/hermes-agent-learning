@@ -130,7 +130,7 @@ Geen intern ontwerp. Alleen of de criteria nu al groen zijn.
 | C Baseline | niet begonnen | Geen vastgelegde baseline-functie per workflow. |
 | D Outcome-interface | niet begonnen | Geen `record-outcome`, geen niveau 3. |
 | E Promotiepoort | niet begonnen | Replay-gate is ijk van adviesverdeling, niet ITT versus baseline op niveau 3. |
-| G CLI | niet begonnen | `replay_advice.py` is geen `status`/`report`/`export-skill`. |
-| H Installatie | niet begonnen | README is ontwikkelaarsdoc, geen pilot-install. |
+| G CLI | deels | `hermes agent-learning status` en `selftest` (observer). Nog geen `record-outcome` / `report` / `export-skill`. |
+| H Installatie | deels | `make install-plugin` koppelt de hele repo. Nog geen pilot-README. |
 
 Stap 1 (F) is het huidige werk. Stap 2 (A, D) start pas na open punt 1.
