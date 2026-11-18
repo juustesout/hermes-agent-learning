@@ -1,6 +1,6 @@
 # Replay-CLI
 
-Status: 18 november 2026. Spec, nog geen code. Poortwachter voor de meetperiode.
+Status: 18 november 2026. Spec + CLI `replay_advice.py`. Poortwachter voor de meetperiode.
 Track B in geheugen, formeel register, holdout/constraints en het automatische meetperiode-hek blijven buiten deze spec.
 
 ## 1. Waarom
@@ -113,8 +113,8 @@ Rapportvelden:
   "top_share": 1.0,
   "counts": {"use_jina_reader": 12},
   "task_id": "choose-scrape-strategy",
-  "policy_id": "",
-  "policy_version": null,
+  "policy_id": "pol-a",
+  "policy_version": 1,
   "feature_track": ["url_host_nieuws", "url_host_code", "url_host_social", "url_host_blog", "url_host_overig", "url_path_depth", "url_has_query", "domain_seen_count", "domain_last_success", "domain_prior_rate"],
   "source": "replay",
   "rows": [
@@ -124,14 +124,20 @@ Rapportvelden:
       "created_at": "2026-11-01T00:00:00+00:00",
       "requested_tool": "web_extract",
       "advised_tool": "use_jina_reader",
-      "probabilities": {},
+      "probabilities": {
+        "use_webclaw_scrape": 0.047426,
+        "use_jina_reader": 0.952574,
+        "use_browser": 0.0
+      },
       "context_features": {}
     }
   ]
 }
 ```
 
-`rows[].context_features` volgt `PRE_CALL_FEATURE_NAMES`. Geen Track B-sleutels.
+`policy_id` is `snapshot.id` (het opgeslagen policy-document). `task_id` blijft de taakfilter. Leeg `policy_id` komt alleen voor als het snapshot ontbreekt, en dat is exit 4.
+
+`rows[].probabilities` is altijd `{action_id: prob}` uit `shadow_policy.advise`, nooit `{}`. Daarmee is "bijna constant" (0.51 / 0.49) te onderscheiden van "ruim gewonnen". `rows[].context_features` volgt `PRE_CALL_FEATURE_NAMES`. Geen Track B-sleutels.
 
 ## 6. CLI
 
