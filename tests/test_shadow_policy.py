@@ -31,6 +31,18 @@ def _write_snapshot(root: Path, snapshot: dict) -> None:
 
 
 def _scrape_snapshot(**overrides) -> dict:
+    names = [
+        "url_host_nieuws",
+        "url_host_code",
+        "url_host_social",
+        "url_host_blog",
+        "url_host_overig",
+        "url_path_depth",
+        "url_has_query",
+        "domain_seen_count",
+        "domain_last_success",
+        "domain_prior_rate",
+    ]
     row = {
         "id": "pol-scrape",
         "agent_id": "hermes",
@@ -48,21 +60,13 @@ def _scrape_snapshot(**overrides) -> dict:
         },
         "metadata": {
             "policy_kind": "contextual_softmax",
-            "feature_dim": 8,
-            "feature_names": [
-                "cloudflare",
-                "content_len_norm",
-                "has_structured_data",
-                "is_elementor",
-                "is_wordpress",
-                "js_heavy",
-                "requires_antibot",
-                "site_known",
-            ],
+            "feature_dim": 10,
+            "feature_names": names,
+            "feature_track": "pre_call",
             "context_weights": {
-                "use_webclaw_scrape": [2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0],
-                "use_jina_reader": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                "use_browser": [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                "use_webclaw_scrape": [0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0, 0.0],
+                "use_jina_reader": [0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "use_browser": [0.0, 0.0, 3.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0],
             },
         },
         "created_at": "2026-11-18T00:00:00+00:00",
@@ -175,6 +179,8 @@ def test_post_joins_one_decision_on_tool_call_id(tmp_path, monkeypatch):
     assert row["duration_ms"] == 41
     assert row["advised_tool"]
     assert row["probabilities"]
+    assert row["feature_track"]
+    assert set(row["feature_track"]) <= set(row["context_features"])
     ops_path = tmp_path / "operations.jsonl"
     ops = [json.loads(line) for line in ops_path.read_text().splitlines() if line.strip()]
     assert all(op.get("metadata", {}).get("source") != "shadow" for op in ops)
@@ -205,19 +211,21 @@ def test_shadow_not_in_opslog_when_opslog_disabled(tmp_path, monkeypatch):
 def test_advise_argmax_contextual():
     snap = _scrape_snapshot()
     features = {
-        "cloudflare": 1.0,
-        "content_len_norm": 0.0,
-        "has_structured_data": 0.0,
-        "is_elementor": 0.0,
-        "is_wordpress": 0.0,
-        "js_heavy": 0.0,
-        "requires_antibot": 1.0,
-        "site_known": 0.0,
+        "url_host_nieuws": 0.0,
+        "url_host_code": 1.0,
+        "url_host_social": 0.0,
+        "url_host_blog": 0.0,
+        "url_host_overig": 0.0,
+        "url_path_depth": 0.0,
+        "url_has_query": 0.0,
+        "domain_seen_count": 0.0,
+        "domain_last_success": 0.5,
+        "domain_prior_rate": 0.5,
     }
     advice = shadow_policy.advise(snap, features, task_id="choose-scrape-strategy")
-    assert advice["advised_tool"] == "use_webclaw_scrape"
-    assert advice["probabilities"]["use_webclaw_scrape"] > advice["probabilities"]["use_browser"]
-    assert "use_jina_reader" not in advice["probabilities"]
+    assert advice["advised_tool"] == "use_jina_reader"
+    assert advice["probabilities"]["use_jina_reader"] > advice["probabilities"]["use_browser"]
+    assert advice["feature_track"][1] == "url_host_code"
 
 
 def test_advise_thompson_uses_means():

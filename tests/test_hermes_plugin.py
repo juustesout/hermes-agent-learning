@@ -66,6 +66,8 @@ def test_build_operation_maps_web_extract():
     assert payload["duration_ms"] == 12
     assert payload["metadata"]["tool_ok"] is True
     assert payload["metadata"]["task_success"] is False
+    assert payload["context_features"]["url_host_overig"] == 1.0
+    assert "cloudflare" not in payload["context_features"]
     assert "session_id" not in payload["metadata"]
     assert "result" not in payload
     assert "args" not in payload
