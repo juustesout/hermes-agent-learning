@@ -16,13 +16,18 @@ import os
 import sys
 from collections import Counter, defaultdict
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
 from features import pre_call_features, host_from_url
 
-STORE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "store")
+STORE_DIR = (
+    os.environ.get("AGENT_LEARNING_OPSLOG_DIR")
+    or os.environ.get("AGENT_LEARNING_LOCAL_STORE_DIR")
+    or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "store")
+)
 OPSLOG = os.path.join(STORE_DIR, "operations.jsonl")
 EPISODES_DIR = os.path.join(STORE_DIR, "episodes", "hermes")
-BACKUP = OPSLOG + ".backup-2026-11-18"
+BACKUP = OPSLOG + ".backup-20261118"
 
 TASK = "choose-scrape-strategy"
 
@@ -98,9 +103,13 @@ print(f"\n  Task-verdeling (huidig):")
 for tid, n in by_task.most_common():
     print(f"    {tid}: {n}")
 
-# URL-dragend in de target task
+# URL-dragend in de target task — tel episodes (replay-bron), niet opslog
+episodes = load_episodes()
+ep_url = [ep for ep in episodes if ep.get("task_id") == TASK and has_host(str(ep.get("target", "")))]
+print(f"\n  URL-dragend in {TASK} (episodes): {len(ep_url)}")
+# Ook uit opslog ter vergelijking
 url_ops = [op for op in current if op.get("task_id") == TASK and has_host(str(op.get("target", "")))]
-print(f"\n  URL-dragend in {TASK}: {len(url_ops)}")
+print(f"  URL-dragend in {TASK} (opslog):   {len(url_ops)}")
 
 # ── 2. Temporele integriteit ────────────────────────────────
 
