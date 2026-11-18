@@ -268,8 +268,12 @@ make check-plugin-sync
 
 `make install-plugin` creates a symlink from `HERMES_PLUGIN_DIR`
 (default `~/.hermes/plugins/agent-learning`) to this repo. It does not
-replace an existing directory. `make check-plugin-sync` fails if the
-installed path is not that symlink or an identical full copy.
+replace an existing directory. Remove the old copy on the Hermes machine
+first if that path already exists.
+
+`make check-plugin-sync` is the drift check. Run it on the Hermes machine
+after every install or code change. CI only smoke-tests that install can
+create the symlink; it cannot see the live Hermes plugin path.
 
 Keep the repo importable (`PYTHONPATH=<repo>`, `AGENT_LEARNING_REPO=<repo>`,
 or `pip install -e .`) so the hook can import `opslog`. If `opslog` is missing,
