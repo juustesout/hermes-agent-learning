@@ -100,7 +100,7 @@ Alarm `constant_advisor`: meer dan 95% van de laatste 200 adviezen dezelfde acti
 
 Dit staat niet in code. Geen extra `features.py` voor nodig totdat er een spec is.
 
-1. **Replay-CLI op echte URL-historie.** Spec: `REPLAY.md`. Nog geen code. Meetperiode start pas bij exit 0 op minstens twaalf URL-episodes met `n_distinct >= 2`.
+1. **Replay-CLI op echte URL-historie.** Spec: `REPLAY.md`. CLI: `replay_advice.py`. Meetperiode start pas bij exit 0 op minstens twaalf URL-episodes met `n_distinct >= 2`.
 
 2. **Track B als geheugen-features, niet alleen success/fail.** Spec: post-fetch features "voeden het geheugen per domein voor de volgende call". Nu onthouden we alleen `{domain, success, action_id, timestamp}`. Cloudflare/js van call t-1 zitten niet in Track A van call t.
 
