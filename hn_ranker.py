@@ -454,10 +454,14 @@ def load_outcomes(view: str = "live") -> list[dict]:
 
 
 def collect_training_rows() -> list[dict]:
-    items = {str(row.get("id")): row for row in blind_label.load_items() if row.get("id")}
-    outcomes = {str(row.get("chosen_id") or row.get("id")): row for row in load_outcomes()}
+    items = {
+        str(row.get("id")): row
+        for row in blind_label._view(blind_label.load_items(), "live")
+        if row.get("id")
+    }
+    outcomes = {str(row.get("chosen_id") or row.get("id")): row for row in load_outcomes(view="live")}
     rows = []
-    for decision in load_decisions():
+    for decision in load_decisions(view="live"):
         item_id = str(decision.get("chosen_id") or "")
         if not item_id:
             continue
