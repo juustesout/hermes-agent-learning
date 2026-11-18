@@ -141,6 +141,7 @@ contain untrusted values (for example custom `action_id` strings).
 ├── shadow_policy.py           # Shadow advisor: snapshot read + decision log
 ├── features.py                # Track A pre-call / Track B post-fetch register
 ├── FEATURES.md                # How Track A/B work; what is not built yet
+├── REPLAY.md                  # Spec: offline advice replay gate (not built yet)
 │
 ├── cron_workflow.sh           # Daily cron: train + run + dashboard
 ├── train_scrape_policy.sh     # Every-6h cron: scrape policy training
