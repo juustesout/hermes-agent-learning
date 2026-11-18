@@ -1,6 +1,6 @@
 [project]
 name = "hermes-agent-learning"
-version = "0.2.0"
+version = "0.3.0"
 description = "Self-learning agent: contextual bandits, workflow credit assignment, and graph evolution"
 authors = [
     {name = "juustesout"},

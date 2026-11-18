@@ -1,4 +1,4 @@
-"""Thin Hermes plugin: post_tool_call -> opslog. Kernel stays Hermes-free."""
+"""Thin Hermes plugin: observer hooks -> opslog/shadow. Kernel stays Hermes-free."""
 
 from __future__ import annotations
 
@@ -29,6 +29,11 @@ try:
     import opslog
 except Exception:  # pragma: no cover - fail-open when kernel is absent
     opslog = None
+
+try:
+    import shadow_policy
+except Exception:  # pragma: no cover - fail-open when kernel is absent
+    shadow_policy = None
 
 PLUGIN_NAME = "agent-learning"
 DEFAULT_TASK_ID = "hermes-tool"
@@ -163,24 +168,56 @@ def build_operation(
     }
 
 
+def _health_error(exc: BaseException) -> None:
+    try:
+        if opslog is not None:
+            opslog.record_health(ok=False, error=str(exc))
+    except Exception:
+        return
+
+
+def on_pre_tool_call(**kwargs) -> None:
+    try:
+        if shadow_policy is None:
+            return None
+        name = str(kwargs.get("tool_name") or "").strip()
+        shadow_policy.record_pre(
+            task_id=task_id_for_tool(name),
+            tool_name=name,
+            args=kwargs.get("args"),
+            session_id=str(kwargs.get("session_id") or ""),
+            conversation_id=str(kwargs.get("conversation_id") or ""),
+            turn_id=str(kwargs.get("turn_id") or ""),
+            tool_call_id=str(kwargs.get("tool_call_id") or ""),
+        )
+    except Exception as exc:
+        _health_error(exc)
+    return None
+
+
 def on_post_tool_call(**kwargs) -> None:
     try:
-        if not logging_enabled():
-            return
-        if opslog is None:
-            return
-        payload = build_operation(**kwargs)
-        if payload is None:
-            return
-        opslog.log_operation(**payload)
+        if logging_enabled() and opslog is not None:
+            payload = build_operation(**kwargs)
+            if payload is not None:
+                opslog.log_operation(**payload)
     except OSError:
-        return
+        pass
     except Exception as exc:
-        try:
-            if opslog is not None:
-                opslog.record_health(ok=False, error=str(exc))
-        except Exception:
-            return
+        _health_error(exc)
+    try:
+        if shadow_policy is not None:
+            shadow_policy.record_post(
+                tool_name=str(kwargs.get("tool_name") or ""),
+                session_id=str(kwargs.get("session_id") or ""),
+                conversation_id=str(kwargs.get("conversation_id") or ""),
+                turn_id=str(kwargs.get("turn_id") or ""),
+                tool_call_id=str(kwargs.get("tool_call_id") or ""),
+                status=str(kwargs.get("status") or ""),
+                duration_ms=kwargs.get("duration_ms"),
+            )
+    except Exception as exc:
+        _health_error(exc)
 
 
 def _handle_cli(args) -> None:
@@ -217,6 +254,7 @@ def _setup_argparse(subparser) -> None:
 
 
 def register(ctx) -> None:
+    ctx.register_hook("pre_tool_call", on_pre_tool_call)
     ctx.register_hook("post_tool_call", on_post_tool_call)
     register_cli = getattr(ctx, "register_cli_command", None)
     if register_cli is not None:

@@ -1,7 +1,7 @@
 name: agent-learning
 label: Agent Learning
 kind: standalone
-version: 0.2.0
+version: 0.3.0
 manifest_version: 2
 api_version: 1
 author: juustesout
@@ -9,9 +9,11 @@ homepage: https://github.com/juustesout/hermes-agent-learning
 license: MIT
 description: >
   Thin Hermes observer that appends tool-call outcomes to agent-learning
-  operations.jsonl. The learning kernel stays Hermes-free.
+  operations.jsonl and logs shadow policy advice. The learning kernel
+  stays Hermes-free. pre_tool_call never changes Hermes behavior.
 tags: [learning, observability, opslog]
 provides_hooks:
+  - pre_tool_call
   - post_tool_call
 config_schema:
   opslog_dir:
@@ -30,3 +32,7 @@ config_schema:
     type: bool
     default: false
     description: Store Hermes session/turn ids. Off by default.
+  shadow_kill:
+    type: bool
+    default: false
+    description: Disable shadow advice. Prefer AGENT_LEARNING_SHADOW_KILL.
