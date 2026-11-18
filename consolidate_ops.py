@@ -21,8 +21,11 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
+import eligibility
 import env_setup  # noqa: F401 — ensures LocalFileStore backend
 import opslog
+
+eligible_scrape = eligibility.eligible_scrape
 
 STORE_DIR = opslog.default_store_dir()
 OPSLOG_PATH = os.path.join(STORE_DIR, "operations.jsonl")
@@ -31,9 +34,9 @@ EPISODES_DIR = os.path.join(STORE_DIR, "episodes", "hermes")
 
 TASK_POLICY_MAP = {
     "choose-scrape-strategy": "choose-scrape-strategy",
-    "db-query": "choose-scrape-strategy",  # fallback policy
-    "wp-publish": "choose-scrape-strategy",
-    "web-research": "choose-scrape-strategy",
+    "db-query": "db-query",
+    "wp-publish": "wp-publish",
+    "web-research": "web-research",
     "podcast-research": "podcast-research",
     "podcast-script": "podcast-script",
     "podcast-audio": "podcast-audio",
@@ -116,7 +119,7 @@ def op_to_episode(op: dict) -> dict:
         "system_message": None,
         "conversation_history": [],
         "tool_calls": [],
-        "policy_id": TASK_POLICY_MAP.get(task_id, "choose-scrape-strategy"),
+        "policy_id": TASK_POLICY_MAP.get(task_id, task_id),
         "policy_version": 0,
         "action_id": action_id,
         "action_logprob": op.get("action_logprob"),
@@ -138,6 +141,9 @@ def op_to_episode(op: dict) -> dict:
             "scrape_success": metadata.get("task_completed", True),
             "content_quality": metadata.get("content_quality", "medium"),
             "latency_ms": op.get("request_latency_ms"),
+            "eligible_scrape": eligible_scrape(
+                {"task_id": task_id, "target": op.get("target", "")}
+            ),
         },
         "created_at": op.get("timestamp", datetime.now(timezone.utc).isoformat()),
     }

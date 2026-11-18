@@ -8,10 +8,13 @@ import os
 import sys
 from typing import Any
 
+import eligibility
 import features
 import opslog
 import shadow_policy
 from features import PRE_CALL_FEATURE_NAMES, FeatureNameMismatch, pre_call_features
+
+eligible_scrape = eligibility.eligible_scrape
 
 advice_features = pre_call_features
 
@@ -120,15 +123,7 @@ def outcome_success(status: str) -> bool | None:
 
 
 def filter_episodes(rows: list[dict], task_id: str) -> list[dict]:
-    wanted = str(task_id or "").strip()
-    kept: list[dict] = []
-    for row in rows:
-        if wanted and str(row.get("task_id") or "").strip() != wanted:
-            continue
-        if not has_host(str(row.get("target") or "")):
-            continue
-        kept.append(row)
-    kept.sort(key=lambda r: (str(r.get("created_at") or ""), str(r.get("id") or "")))
+    kept, _skip = eligibility.classify_rows(rows, task_id=task_id)
     return kept
 
 
@@ -181,6 +176,22 @@ def replay(episodes: list[dict], snapshot: dict) -> list[dict]:
     return out
 
 
+def top_margin(probs: dict) -> float:
+    vals = sorted((float(v) for v in (probs or {}).values()), reverse=True)
+    if not vals:
+        return 0.0
+    if len(vals) == 1:
+        return 1.0
+    return vals[0] - vals[1]
+
+
+def mean_top_margin(rows: list[dict]) -> float:
+    margins = [top_margin(r.get("probabilities") or {}) for r in rows]
+    if not margins:
+        return 0.0
+    return round(sum(margins) / len(margins), 6)
+
+
 def gate(rows: list[dict], *, min_n: int) -> dict:
     advised = [str(r.get("advised_tool") or "") for r in rows if r.get("advised_tool")]
     n = len(advised)
@@ -200,6 +211,7 @@ def gate(rows: list[dict], *, min_n: int) -> dict:
         "top_action": top_action,
         "top_share": round(top_share, 6),
         "counts": counts,
+        "mean_top_margin": mean_top_margin(rows),
         "gate_open": n >= min_n and n_distinct >= 2,
     }
 
@@ -218,12 +230,14 @@ def build_report(
     snapshot: dict,
     task_id: str,
     min_n: int,
+    skipped: dict | None = None,
 ) -> dict:
     status = gate(rows, min_n=min_n)
     track = list(PRE_CALL_FEATURE_NAMES)
     ctx = rows[0].get("context_features") if rows else None
     if isinstance(ctx, dict) and ctx:
         track = list(ctx.keys())
+    skip = skipped or {}
     return {
         "gate_open": status["gate_open"],
         "n": status["n"],
@@ -231,7 +245,11 @@ def build_report(
         "n_distinct": status["n_distinct"],
         "top_action": status["top_action"],
         "top_share": status["top_share"],
+        "mean_top_margin": status["mean_top_margin"],
         "counts": status["counts"],
+        "skipped_no_host": int(skip.get("skipped_no_host") or 0),
+        "skipped_wrong_task": int(skip.get("skipped_wrong_task") or 0),
+        "skipped_samples": list(skip.get("skipped_samples") or []),
         "task_id": task_id,
         "policy_id": str(snapshot.get("id") or ""),
         "policy_version": snapshot.get("version"),
@@ -239,6 +257,20 @@ def build_report(
         "source": SOURCE,
         "rows": rows,
     }
+
+
+def human_line(report: dict) -> str:
+    state = "open" if report.get("gate_open") else "closed"
+    top = report.get("top_action") or "-"
+    return (
+        f"gate={state}  exit={exit_code(report)}  "
+        f"n={report.get('n')}/{report.get('min_n')}  "
+        f"distinct={report.get('n_distinct')}  "
+        f"top={top} {float(report.get('top_share') or 0):.2f}  "
+        f"margin={float(report.get('mean_top_margin') or 0):.4f}  "
+        f"skipped_no_host={report.get('skipped_no_host', 0)}  "
+        f"skipped_wrong_task={report.get('skipped_wrong_task', 0)}"
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -273,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(f"corpus error: {exc}", file=sys.stderr)
         return 1
-    episodes = filter_episodes(raw, args.task_id)
+    episodes, skipped = eligibility.classify_rows(raw, task_id=args.task_id)
     try:
         if args.snapshot:
             if not os.path.isfile(args.snapshot):
@@ -291,13 +323,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         rows = replay(episodes, snapshot)
         report = build_report(
-            rows, snapshot=snapshot, task_id=args.task_id, min_n=args.min_n
+            rows,
+            snapshot=snapshot,
+            task_id=args.task_id,
+            min_n=args.min_n,
+            skipped=skipped,
         )
     except FeatureNameMismatch as cop:
         print(str(cop), file=sys.stderr)
         return 4
     text = json.dumps(report, indent=2, default=str)
     print(text)
+    print(human_line(report), file=sys.stderr)
     if args.out:
         try:
             parent = os.path.dirname(args.out)
