@@ -123,7 +123,7 @@ Geen intern ontwerp. Alleen of de criteria nu al groen zijn.
 
 | Onderdeel | Stand | Bewijs |
 |-----------|-------|--------|
-| F Eligibility | grotendeels groen, niet af | `eligibility.eligible_scrape` gedeeld door replay, train, consolidate, shadow-health. Test: `tests/test_eligibility.py`. Replay toont skipped + sample + `mean_top_margin`. Mapping `wp-publish`/`db-query`/`web-research` valt niet meer in scrape. |
+| F Eligibility | grotendeels groen, niet af | `eligibility.eligible_scrape` gedeeld door replay, train, consolidate, shadow-health. Test: `tests/test_eligibility.py`. Replay toont skipped + sample + `mean_top_margin`. Mapping `mcp_webclaw_webclaw_scrape` → scrape; `wp-publish`/`db-query`/`web-research` vallen niet in scrape. `timeout` telt als fail. |
 | B Shadow | aanwezig, niet afgerond als MVP-stap | `hermes_plugin.on_pre_tool_call` altijd `None`. Tests in `tests/test_shadow_policy.py` / `tests/test_hermes_plugin.py`. Afronden is stap 5, niet nu. |
 | Replay-gate | helper, geen MVP-onderdeel | `replay_advice.py`. Exit 0/2/3/4 getest. Op echte store: exit 3, n=3. `min_n` blijft 12. |
 | A Decision-record | niet begonnen | Logs liggen nog in `operations.jsonl`, `shadow_decisions.jsonl`, episodes. Geen atoom. |
