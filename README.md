@@ -209,10 +209,10 @@ flags missing or unfinished runs. Podcast/cron wrappers are a follow-up.
 
 | Task-ID | Action-Type |
 |---------|-------------|
-| `choose-scrape-strategy` | web_scrape, web_search |
+| `choose-scrape-strategy` | `web_extract`, `browser_navigate`, `mcp_webclaw_webclaw_scrape` |
 | `db-query` | database_query |
 | `wp-publish` | wp_rest_api |
-| `web-research` | web_search |
+| `web-research` | `web_search` |
 | `podcast-*` | research, script, audio, publish |
 
 ### Cron Schedule

@@ -51,7 +51,7 @@ Velden die de CLI mag lezen:
 | `execution_status` | succes voor in-memory domeinhistorie van latere rijen |
 | `task_id` | filter |
 
-Succes voor historie: `execution_status` in `{completed, success, ok}` is True; `failed` / `error` is False; anders sla de rij over voor geheugen (advies zelf gaat wel door).
+Succes voor historie: `execution_status` in `{completed, success, ok}` is True; `failed` / `error` / `timeout` / `blocked` / `cancelled` is False; anders sla de rij over voor geheugen (advies zelf gaat wel door).
 
 Deze worktree heeft geen `store/` (gitignored). De twaalf bestaande episodes zitten op de machine met de echte store, niet in git. Tests leveren een fixture van twaalf URL-rijen. De gate op een echte run faalt als er minder dan twaalf URL-dragende scrape-episodes zijn. Gebruik dan niet stilletjes de testhulp. Zijn er meer dan twaalf, replay alle gefilterde rijen; twaalf is het minimum, niet het maximum.
 

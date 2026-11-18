@@ -23,7 +23,7 @@ DEFAULT_TASK_ID = "choose-scrape-strategy"
 DEFAULT_AGENT_ID = "hermes"
 DEFAULT_MIN_N = 12
 SUCCESS_STATUSES = {"completed", "success", "ok"}
-FAIL_STATUSES = {"failed", "error"}
+FAIL_STATUSES = {"failed", "error", "timeout", "blocked", "cancelled"}
 
 
 def default_episodes_dir() -> str:
