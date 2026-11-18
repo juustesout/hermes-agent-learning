@@ -11,13 +11,13 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote
 
+import features as feature_register
 import opslog
-from constraints import apply_scrape_constraints
-from scrape_features import FEATURE_NAMES, describe_site, phi_to_vector
+
+advice_features = feature_register.advice_features
 
 SOURCE = "shadow"
 AGENT_ID = "hermes"
-SCRAPE_TASK = "choose-scrape-strategy"
 KILL_ENV = "AGENT_LEARNING_SHADOW_KILL"
 ENABLED_ENV = "AGENT_LEARNING_SHADOW_ENABLED"
 LOG_NAME = "shadow_decisions.jsonl"
@@ -31,6 +31,7 @@ _PENDING: OrderedDict[str, dict] = OrderedDict()
 def reset_cache() -> None:
     _CACHE.clear()
     _PENDING.clear()
+    feature_register.reset_memory()
 
 
 def shadow_enabled() -> bool:
@@ -43,6 +44,41 @@ def shadow_enabled() -> bool:
 
 def log_path() -> str:
     return os.path.join(opslog.STORE_DIR, LOG_NAME)
+
+
+def health_path() -> str:
+    return os.path.join(opslog.STORE_DIR, "shadow-health.json")
+
+
+def _write_shadow_health(alarm: dict) -> None:
+    path = health_path()
+    payload = dict(alarm)
+    payload["checked_at"] = datetime.now(timezone.utc).isoformat()
+
+    def _write():
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.write("\n")
+        os.replace(tmp, path)
+
+    try:
+        opslog._with_lock(path, _write)
+    except OSError:
+        return
+
+
+def load_health() -> dict:
+    path = health_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 def _safe_component(value: str) -> str:
@@ -76,22 +112,20 @@ def join_key(
     return f"{sid}|{str(turn_id or '').strip()}|{str(tool_name or '').strip()}"
 
 
-def features_from_args(args: Any) -> dict[str, float]:
-    target = ""
-    if isinstance(args, dict):
-        for key in ("url", "uri", "href", "path", "query", "target"):
-            value = args.get(key)
-            if isinstance(value, str) and value.strip():
-                target = value.strip()
-                break
-    if target:
-        try:
-            phi = describe_site(target, html="", headers=None)
-        except Exception:
-            phi = {name: 0.0 for name in FEATURE_NAMES}
-    else:
-        phi = {name: 0.0 for name in FEATURE_NAMES}
-    return {name: float(phi.get(name, 0.0)) for name in FEATURE_NAMES}
+def target_from_args(args: Any) -> str:
+    if not isinstance(args, dict):
+        return ""
+    for key in ("url", "uri", "href", "path", "query", "target"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def features_from_args(args: Any, *, at: str = "", action_id: str = "") -> dict[str, float]:
+    return feature_register.advice_features(
+        target_from_args(args), at=at or None, action_id=action_id
+    )
 
 
 def _action_ids(snapshot: dict) -> list[str]:
@@ -124,28 +158,27 @@ def _round_probs(action_ids: list[str], probs: list[float]) -> dict[str, float]:
     }
 
 
-def _phi_vector(snapshot: dict, features: dict[str, float]) -> list[float]:
+def _phi_vector(snapshot: dict, features: dict[str, float]) -> tuple[list[float], list[str]]:
     meta = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
-    dim = int(meta.get("feature_dim") or len(FEATURE_NAMES))
     names = meta.get("feature_names")
-    if isinstance(names, list) and names:
-        vec = [float(features.get(str(name), 0.0)) for name in names]
-    else:
-        vec = phi_to_vector(features)
-    if len(vec) < dim:
-        vec = vec + [0.0] * (dim - len(vec))
-    return vec[:dim]
+    track = feature_register.require_pre_call_names(names)
+    dim = int(meta.get("feature_dim") or len(track))
+    if dim != len(track):
+        raise feature_register.FeatureNameMismatch(
+            f"snapshot feature_dim {dim} != register {len(track)}"
+        )
+    return feature_register.phi_vector(features, track), track
 
 
-def _probs_for(snapshot: dict, action_ids: list[str], features: dict[str, float]) -> list[float]:
+def _probs_for(snapshot: dict, action_ids: list[str], features: dict[str, float]) -> tuple[list[float], list[str]]:
     n = len(action_ids)
     if n == 0:
-        return []
+        return [], []
     meta = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
     kind = str(meta.get("policy_kind") or "")
     if kind == "contextual_softmax" or "context_weights" in meta:
-        dim = int(meta.get("feature_dim") or len(FEATURE_NAMES))
-        vec = _phi_vector(snapshot, features)
+        vec, track = _phi_vector(snapshot, features)
+        dim = len(track)
         weights = meta.get("context_weights") if isinstance(meta.get("context_weights"), dict) else {}
         logits = []
         for aid in action_ids:
@@ -159,7 +192,7 @@ def _probs_for(snapshot: dict, action_ids: list[str], features: dict[str, float]
                 except (TypeError, ValueError, IndexError):
                     continue
             logits.append(acc)
-        return _softmax(logits)
+        return _softmax(logits), track
     if "thompson_alpha" in meta:
         alphas = meta.get("thompson_alpha") if isinstance(meta.get("thompson_alpha"), dict) else {}
         betas = meta.get("thompson_beta") if isinstance(meta.get("thompson_beta"), dict) else {}
@@ -174,8 +207,8 @@ def _probs_for(snapshot: dict, action_ids: list[str], features: dict[str, float]
             means.append(a / denom if denom > 0 else 1.0 / n)
         total = sum(means)
         if total <= 0:
-            return [1.0 / n] * n
-        return [m / total for m in means]
+            return [1.0 / n] * n, []
+        return [m / total for m in means], []
     raw_logits = snapshot.get("logits") if isinstance(snapshot.get("logits"), dict) else {}
     logits = []
     for aid in action_ids:
@@ -183,7 +216,7 @@ def _probs_for(snapshot: dict, action_ids: list[str], features: dict[str, float]
             logits.append(float(raw_logits.get(aid, 0.0)))
         except (TypeError, ValueError):
             logits.append(0.0)
-    return _softmax(logits)
+    return _softmax(logits), []
 
 
 def advise(
@@ -192,17 +225,26 @@ def advise(
     *,
     task_id: str = "",
 ) -> dict:
+    del task_id
     if not isinstance(snapshot, dict):
-        return {"advised_tool": "", "probabilities": {}}
+        return {
+            "advised_tool": "",
+            "probabilities": {},
+            "feature_track": list(feature_register.PRE_CALL_FEATURE_NAMES),
+        }
     action_ids = _action_ids(snapshot)
     if not action_ids:
-        return {"advised_tool": "", "probabilities": {}}
+        return {
+            "advised_tool": "",
+            "probabilities": {},
+            "feature_track": list(feature_register.PRE_CALL_FEATURE_NAMES),
+        }
     phi = features or {}
-    if str(task_id or snapshot.get("task_id") or "") == SCRAPE_TASK:
-        action_ids = apply_scrape_constraints(phi, action_ids)
-    probs = _probs_for(snapshot, action_ids, phi)
+    probs, track = _probs_for(snapshot, action_ids, phi)
+    if not track:
+        track = list(feature_register.PRE_CALL_FEATURE_NAMES)
     if not probs:
-        return {"advised_tool": "", "probabilities": {}}
+        return {"advised_tool": "", "probabilities": {}, "feature_track": track}
     idx = max(range(len(probs)), key=lambda i: probs[i])
     meta = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
     return {
@@ -211,6 +253,7 @@ def advise(
         "policy_id": str(snapshot.get("id") or ""),
         "policy_version": snapshot.get("version"),
         "policy_kind": str(meta.get("policy_kind") or ""),
+        "feature_track": track,
     }
 
 
@@ -333,8 +376,12 @@ def record_pre(
         return
     tid = str(task_id or "").strip() or "hermes-tool"
     snapshot = cached_snapshot(tid)
-    features = features_from_args(args)
+    now = datetime.now(timezone.utc).isoformat()
+    target = target_from_args(args)
+    features = feature_register.advice_features(target, at=now, action_id=name)
     advice = advise(snapshot, features, task_id=tid)
+    track = list(advice.get("feature_track") or feature_register.PRE_CALL_FEATURE_NAMES)
+    used = {name: float(features.get(name, 0.0)) for name in track}
     key = join_key(
         session_id=session_id,
         conversation_id=conversation_id,
@@ -347,7 +394,7 @@ def record_pre(
         {
             "record": "decision",
             "source": SOURCE,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": now,
             "join_key": key,
             "session_id": str(session_id or ""),
             "conversation_id": str(conversation_id or ""),
@@ -356,13 +403,26 @@ def record_pre(
             "requested_tool": name,
             "advised_tool": advice.get("advised_tool") or "",
             "probabilities": advice.get("probabilities") or {},
-            "context_features": features,
+            "context_features": used,
+            "feature_track": track,
+            "target": target,
             "task_id": tid,
             "policy_id": advice.get("policy_id") or "",
             "policy_version": advice.get("policy_version"),
             "policy_kind": advice.get("policy_kind") or "",
         },
     )
+
+
+def _html_from_result(result: Any) -> str:
+    if isinstance(result, str):
+        return result[:20000]
+    if isinstance(result, dict):
+        for key in ("html", "content", "text", "body"):
+            value = result.get(key)
+            if isinstance(value, str) and value:
+                return value[:20000]
+    return ""
 
 
 def record_post(
@@ -374,6 +434,7 @@ def record_post(
     tool_call_id: str = "",
     status: str = "",
     duration_ms: Any = None,
+    result: Any = None,
 ) -> None:
     if not shadow_enabled():
         return
@@ -397,4 +458,18 @@ def record_post(
     row["status"] = outcome
     row["duration_ms"] = latency
     row["hermes_status"] = outcome
+    html = _html_from_result(result)
+    if html:
+        row["post_fetch_features"] = feature_register.post_fetch_features(
+            str(row.get("target") or ""), html=html, headers=None
+        )
+    feature_register.remember_outcome(
+        domain=feature_register.host_from_url(str(row.get("target") or "")),
+        success=outcome == "ok",
+        action_id=str(row.get("requested_tool") or ""),
+        timestamp=str(row.get("timestamp") or ""),
+    )
     _append(row)
+    alarm = feature_register.constant_advisor_status(load_decisions())
+    if alarm.get("alarm"):
+        _write_shadow_health(alarm)

@@ -139,6 +139,7 @@ contain untrusted values (for example custom `action_id` strings).
 ├── schema/workflow.schema.json  # compat alias → skill_schema/schemas/skill.schema.json
 ├── hermes_plugin/             # Hermes observer — standaard sinds 17 Nov 2026
 ├── shadow_policy.py           # Shadow advisor: snapshot read + decision log
+├── features.py                # Track A pre-call / Track B post-fetch register
 │
 ├── cron_workflow.sh           # Daily cron: train + run + dashboard
 ├── train_scrape_policy.sh     # Every-6h cron: scrape policy training
@@ -228,7 +229,9 @@ als basis en accepteren overrides via environment variables:
 automatisch naar `store/operations.jsonl` via `opslog.log_operation()`.
 `pre_tool_call` also records what the active policy would advise
 (`store/shadow_decisions.jsonl`) and always returns `None`. Shadow mode
-does not block, modify, or swap tools.
+does not block, modify, or swap tools. Advice uses Track A pre-call
+features from `features.py` (URL + domain memory). HTML/header features
+are Track B and only stored after the fetch.
 
 Enabling the plugin is the opt-in. Tool-call success (`status == ok`) is not
 user-task success; metadata stores `tool_ok` and `task_success=false`.
