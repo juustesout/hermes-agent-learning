@@ -228,3 +228,48 @@ def test_arm_balance_and_overlap():
     assert blind_label.arm_balance(skewed)["ok"] is False
     assert blind_label.selection_overlap(skewed)["learned_rate"] == 1.0
     assert blind_label.selection_overlap(skewed)["n_contrast"] == 0
+
+
+def _pool_item(item_id: str, **extra) -> dict:
+    payload = {
+        "id": item_id,
+        "title": f"Title {item_id}",
+        "url": f"https://example.com/{item_id}",
+        "summary": f"Summary {item_id}",
+        "rag_score": 0.8,
+        "arm": "L",
+        "auto_relevant": True,
+    }
+    payload.update(extra)
+    return payload
+
+
+def test_enqueue_pool_queues_all_candidates(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    pool = [_pool_item(f"c{i}") for i in range(30)]
+    result = blind_label.enqueue_pool(pool, run_id="run-pool")
+    assert result["added"] == 30
+    assert result["sampled"] == 30
+    assert len(blind_label.load_candidates()) == 30
+    assert len(blind_label.load_queue()) == 30
+    card = blind_label.next_card()
+    assert card is not None
+    dumped = json.dumps(card)
+    assert "arm" not in dumped
+    assert "rag_score" not in dumped
+    assert "auto_relevant" not in dumped
+    stored = {row["id"]: row for row in blind_label.load_candidates()}
+    assert stored["c0"]["rag_score"] == 0.8
+    again = blind_label.enqueue_pool(pool, run_id="run-pool")
+    assert again["added"] == 0
+    assert again["skipped"] == 30
+
+
+def test_posted_item_already_queued_from_pool_is_not_double_sampled(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    pool = [_pool_item("same-1")]
+    blind_label.enqueue_pool(pool, run_id="run-same")
+    result = blind_label.enqueue_item(_item("same-1", http_status=201))
+    assert result["sampled"] is True
+    assert len(blind_label.load_queue()) == 1
+    assert len(blind_label.load_items()) == 1

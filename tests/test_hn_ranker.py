@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -203,3 +204,55 @@ def test_prior_scores_by_rag():
     chosen, score = hn_ranker.ranker_pick(GOLDEN_POOL, {"model_version": hn_ranker.PRIOR_VERSION})
     assert chosen["id"] == "b"
     assert score == 0.9
+
+
+def test_select_run_queues_full_pool(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    decisions = hn_ranker.select_run(
+        GOLDEN_POOL,
+        "run-pool",
+        force_arms=["B", "L"],
+        write=True,
+    )
+    assert len(decisions) == 2
+    queued = {row["id"] for row in blind_label.load_queue()}
+    assert queued == {"a", "b", "c", "d"}
+    cards = {row["id"] for row in blind_label.load_candidates()}
+    assert cards == queued
+    dumped = json.dumps(blind_label.next_card())
+    assert "arm" not in dumped
+    assert "rag_score" not in dumped
+
+
+def test_train_uses_human_labels_not_auto(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    hn_ranker.select_run(GOLDEN_POOL, "run-train", force_arms=["B", "L"], write=True)
+    for item in GOLDEN_POOL:
+        blind_label.record_label(
+            item["id"],
+            relevant=item["id"] in {"b", "c"},
+            duplicate=False,
+            needs_correction=False,
+        )
+    rows = hn_ranker.collect_training_rows()
+    by_id = {row["id"]: row for row in rows}
+    assert set(by_id) == {"a", "b", "c", "d"}
+    assert by_id["a"]["quality_success"] is False
+    assert by_id["b"]["quality_success"] is True
+    assert "auto_relevant" not in by_id["a"]
+    assert "hn_points" in by_id["a"]["features"]
+    assert by_id["c"]["features"]["rag_score"] == 0.80
+    assert by_id["d"]["features"]["rag_score"] == 0.20
+    vec = hn_ranker.feature_vector(by_id["a"]["features"])
+    assert vec.shape[0] == len(hn_ranker.TRAIN_NUMERIC) + len(hn_ranker.DOMAIN_CATS) + 1
+    assert hn_ranker.can_train(n_human_labeled=199) is False
+    assert hn_ranker.can_train(n_human_labeled=200) is True
+
+
+def test_hn_points_logged_not_trained():
+    feats = hn_ranker.extract_features(GOLDEN_POOL[0])
+    assert "hn_points" in feats
+    assert "hn_comments" in feats
+    names = list(hn_ranker.TRAIN_NUMERIC) + list(hn_ranker.DOMAIN_CATS) + ["bias"]
+    assert "hn_points" not in names
+    assert "hn_comments" not in names

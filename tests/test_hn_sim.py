@@ -35,7 +35,8 @@ def test_200_runs_write_decision_before_post(tmp_path, monkeypatch):
     assert items == chosen == outcomes
     assert summary["decision_arms"]["L"] > 0
     assert summary["decision_arms"]["B"] > 0
-    assert summary["labeled"] == summary["sampled"]
+    assert summary["sampled"] > summary["posted"]
+    assert summary["labeled"] == summary["posted"]
     assert summary["live_labeled"] == 0
     assert summary["live_agreement"] is None
     assert summary["overlap"]["n"] == 400
