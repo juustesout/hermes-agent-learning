@@ -26,9 +26,16 @@ be empty. Fill the queue first (below), then start the UI again.
 
 ## How the queue fills
 
-Live path: the 6h job runs `hn_ranker.py select` on the RAG-filtered pool
-(~30 items). `select_run(..., write=True)` posts two slots and then calls
-`blind_label.enqueue_pool` on the whole pool.
+Live path: an external producer writes `inbox/pool-<run_id>.jsonl`
+(`pool.v1`). Import queues the pool; select writes the two posts:
+
+```bash
+python3 pool_v1.py pool import inbox/pool-2026-11-19T12.jsonl
+python3 pool_v1.py select --run-id 2026-11-19T12
+```
+
+The 6h job can still run `hn_ranker.py select` on a JSON pool. That also
+calls `blind_label.enqueue_pool`.
 
 Manual path, same store as the UI:
 
