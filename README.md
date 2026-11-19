@@ -352,6 +352,16 @@ not the automatic score. `hn_points` and `hn_comments` are logged, not
 trained on. The ranker stays on `prior-v1` (`rag_score` descending) until
 200 human-labeled pool items.
 
+Local loopback UI for one rater. Binds `127.0.0.1` only and writes through
+`record_label()`:
+
+```bash
+python3 label_ui.py
+```
+
+Open `http://127.0.0.1:8765`. The page shows title, url, and summary.
+Keys: 1/2 relevant, 3/4 duplicate, 5/6 correction, Enter save.
+
 ### Local mechanical simulation
 
 `hn_sim.py` runs the 6h job against a loopback WordPress mock. Drafts only;
