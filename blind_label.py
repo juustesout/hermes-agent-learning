@@ -2,7 +2,8 @@
 
 Raters see title/url/summary only. Arm, policy, rank, and auto scores stay
 in assignments.jsonl, never in the rater card.
-Sampling is a stable 20 percent of posted item ids.
+Posted items still get a 20 percent sample. The candidate pool of a run
+is queued in full so the other 28 items can be labeled too.
 Slot assignment and ranking live in hn_ranker.py.
 """
 
@@ -33,6 +34,7 @@ EXPECTED_POSTS_PER_DAY = 8
 EXPECTED_RUNS_PER_DAY = 4
 DECISION_RECORD = "decision"
 OUTCOME_RECORD = "outcome"
+POOL_RECORD = "pool"
 SOURCE_ENV = "AGENT_LEARNING_EVIDENCE_SOURCE"
 SOURCE_SIM = "sim"
 SOURCE_LIVE = "live"
@@ -71,7 +73,19 @@ HIDDEN_FIELDS = frozenset(
         "baseline_pick_id",
         "features",
         "run_id",
+        "hn_points",
+        "hn_comments",
+        "age_hours",
+        "title_len",
+        "domain_cat",
     }
+)
+CANDIDATE_FEATURE_FIELDS = (
+    "source_rank",
+    "rag_score",
+    "hn_points",
+    "hn_comments",
+    "age_hours",
 )
 VISIBLE_FIELDS = ("id", "title", "url", "summary", "posted_at", "hn_id", "workflow")
 YES = {"1", "true", "yes", "y", "on"}
@@ -293,11 +307,18 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _append_jsonl(path: Path, row: dict) -> None:
-    payload = {**row, "source": row.get("source", current_source())}
+    _append_jsonl_many(path, [row])
+
+
+def _append_jsonl_many(path: Path, rows: Iterable[dict]) -> None:
+    payloads = [{**row, "source": row.get("source", current_source())} for row in rows]
+    if not payloads:
+        return
 
     def _write():
         with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, default=str) + "\n")
+            for payload in payloads:
+                f.write(json.dumps(payload, default=str) + "\n")
             f.flush()
 
     opslog._with_lock(str(path), _write)
@@ -305,6 +326,10 @@ def _append_jsonl(path: Path, row: dict) -> None:
 
 def load_items() -> list[dict]:
     return _read_jsonl(_path("items.jsonl"))
+
+
+def load_candidates() -> list[dict]:
+    return _read_jsonl(_path("candidates.jsonl"))
 
 
 def load_queue() -> list[dict]:
@@ -419,14 +444,16 @@ def enqueue_item(item: dict) -> dict:
     record.setdefault("posted_at", datetime.now(timezone.utc).isoformat())
     _append_jsonl(_path("items.jsonl"), record)
     _append_jsonl(_path("assignments.jsonl"), assignment_record(item, assigned))
-    sampled = should_sample(item_id)
-    if sampled:
+    sampled = item_id in _ids(load_queue())
+    if not sampled and should_sample(item_id):
+        sampled = True
         _append_jsonl(
             _path("queue.jsonl"),
             {
                 "id": item_id,
                 "queued_at": datetime.now(timezone.utc).isoformat(),
                 "success_definition": SUCCESS_DEFINITION,
+                "origin": "posted",
             },
         )
     return {
@@ -440,15 +467,73 @@ def enqueue_item(item: dict) -> dict:
     }
 
 
+def enqueue_pool(pool: Iterable[dict], *, run_id: str, sample: bool = True) -> dict:
+    queued = _ids(load_queue())
+    known = _ids(load_candidates()) | _ids(load_items())
+    added = 0
+    sampled = 0
+    skipped = 0
+    cards: list[dict] = []
+    queue_rows: list[dict] = []
+    now = datetime.now(timezone.utc).isoformat()
+    for raw in pool or []:
+        if not isinstance(raw, dict):
+            continue
+        item_id = str(raw.get("id") or "").strip()
+        title = str(raw.get("title") or "").strip()
+        url = str(raw.get("url") or "").strip()
+        if not item_id or not title or not url:
+            skipped += 1
+            continue
+        if item_id in known:
+            skipped += 1
+            continue
+        known.add(item_id)
+        card = {
+            **public_item(raw),
+            "run_id": str(run_id),
+            "record": POOL_RECORD,
+            "queued_at": now,
+        }
+        for key in CANDIDATE_FEATURE_FIELDS:
+            if key in raw and raw[key] is not None:
+                card[key] = raw[key]
+        cards.append(card)
+        added += 1
+        if sample and item_id not in queued:
+            queued.add(item_id)
+            queue_rows.append(
+                {
+                    "id": item_id,
+                    "queued_at": now,
+                    "success_definition": SUCCESS_DEFINITION,
+                    "origin": "pool",
+                    "run_id": str(run_id),
+                }
+            )
+            sampled += 1
+    if cards:
+        _append_jsonl_many(_path("candidates.jsonl"), cards)
+    if queue_rows:
+        _append_jsonl_many(_path("queue.jsonl"), queue_rows)
+    return {
+        "run_id": str(run_id),
+        "added": added,
+        "sampled": sampled,
+        "skipped": skipped,
+    }
+
+
 def unlabeled_queue() -> list[dict]:
     labeled = _ids(load_labels())
-    items = {row["id"]: row for row in load_items() if row.get("id")}
+    cards = {row["id"]: row for row in load_candidates() if row.get("id")}
+    cards.update({row["id"]: row for row in load_items() if row.get("id")})
     pending = []
     for row in load_queue():
         item_id = str(row.get("id") or "")
         if not item_id or item_id in labeled:
             continue
-        item = items.get(item_id)
+        item = cards.get(item_id)
         if item:
             pending.append(item)
     return pending
@@ -468,6 +553,10 @@ def queue_status() -> dict:
         ts = row.get("queued_at")
         if ts and (last_enqueue is None or str(ts) > str(last_enqueue)):
             last_enqueue = ts
+    for row in load_candidates():
+        ts = row.get("queued_at")
+        if ts and (last_enqueue is None or str(ts) > str(last_enqueue)):
+            last_enqueue = ts
     since = 0
     if last_enqueue:
         cutoff = _parse_ts(last_enqueue)
@@ -476,6 +565,7 @@ def queue_status() -> dict:
     return {
         "pending": len(pending),
         "sampled": len(queue),
+        "candidates": len(load_candidates()),
         "labeled": sum(1 for row in queue if row.get("id") in labeled),
         "posted": len(items),
         "last_enqueue": last_enqueue,
@@ -587,6 +677,7 @@ def report(view: str = "live") -> dict:
         "posted": len(items),
         "assignments": len(assignments),
         "sampled": len(queue),
+        "candidates": len(_view(load_candidates(), view)),
         "labeled": labeled_n,
         "remaining": remaining,
         "sample_rate": SAMPLE_RATE,
@@ -782,6 +873,11 @@ def main(argv=None) -> int:
     p_en = sub.add_parser("enqueue", help="Add a posted or failed HN item")
     p_en.add_argument("--json", required=True, help="Posted item as JSON object")
 
+    p_pool = sub.add_parser("enqueue-pool", help="Queue a run's candidate pool for blind labels")
+    p_pool.add_argument("--run-id", required=True)
+    p_pool.add_argument("--json", default="")
+    p_pool.add_argument("--jsonl", default="")
+
     p_imp = sub.add_parser("import-jsonl", help="Bulk enqueue posted items")
     p_imp.add_argument("path")
 
@@ -810,6 +906,20 @@ def main(argv=None) -> int:
     if args.cmd == "enqueue":
         item = json.loads(args.json)
         print(json.dumps(enqueue_item(item), indent=2))
+        return 0
+    if args.cmd == "enqueue-pool":
+        if args.json:
+            payload = json.loads(args.json)
+            if isinstance(payload, dict):
+                pool = list(payload.get("items") or payload.get("pool") or ([payload] if payload.get("id") else []))
+            else:
+                pool = list(payload)
+        elif args.jsonl:
+            pool = _read_jsonl(Path(args.jsonl))
+        else:
+            print("provide --json or --jsonl", file=sys.stderr)
+            return 1
+        print(json.dumps(enqueue_pool(pool, run_id=args.run_id), indent=2))
         return 0
     if args.cmd == "import-jsonl":
         n = 0

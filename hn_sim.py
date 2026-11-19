@@ -106,6 +106,9 @@ def simulate_label(item_id: str, relevant: bool, *, agreement: float, rng: rando
     queued = {str(row.get("id")) for row in blind_label.load_queue()}
     if item_id not in queued:
         return None
+    labeled = {str(row.get("id")) for row in blind_label.load_labels()}
+    if item_id in labeled:
+        return None
     agree = rng.random() < agreement
     human_relevant = relevant if agree else (not relevant)
     return blind_label.record_label(

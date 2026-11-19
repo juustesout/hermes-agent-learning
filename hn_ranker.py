@@ -33,7 +33,7 @@ LOGREG_VERSION = "logreg-v1"
 DECISION_RECORD = "decision"
 OUTCOME_RECORD = "outcome"
 
-NUMERIC_FEATURES = (
+LOGGED_NUMERIC = (
     "source_rank",
     "rag_score",
     "hn_points",
@@ -41,6 +41,13 @@ NUMERIC_FEATURES = (
     "age_hours",
     "title_len",
 )
+TRAIN_NUMERIC = (
+    "source_rank",
+    "rag_score",
+    "age_hours",
+    "title_len",
+)
+NUMERIC_FEATURES = LOGGED_NUMERIC
 DOMAIN_CATS = (
     "arxiv",
     "blog",
@@ -193,7 +200,7 @@ def feature_vector(
     mean: Optional[np.ndarray] = None,
     std: Optional[np.ndarray] = None,
 ) -> np.ndarray:
-    numeric = np.array([_num(features.get(name)) for name in NUMERIC_FEATURES], dtype=float)
+    numeric = np.array([_num(features.get(name)) for name in TRAIN_NUMERIC], dtype=float)
     if mean is not None and std is not None:
         safe = np.where(np.asarray(std) == 0, 1.0, np.asarray(std))
         numeric = (numeric - np.asarray(mean)) / safe
@@ -295,9 +302,9 @@ def fit_model(
     if len(selected) < min_n:
         raise ValueError(f"not enough training rows: {len(selected)} < {min_n}")
     cleaned = [_features_from_row(row) for row in selected]
-    labels = [1.0 if row.get("auto_relevant") else 0.0 for row in selected]
+    labels = [1.0 if row.get("quality_success") else 0.0 for row in selected]
     numeric = np.array(
-        [[_num(feats.get(name)) for name in NUMERIC_FEATURES] for feats in cleaned],
+        [[_num(feats.get(name)) for name in TRAIN_NUMERIC] for feats in cleaned],
         dtype=float,
     )
     mean = numeric.mean(axis=0)
@@ -322,17 +329,14 @@ def fit_model(
         "n": int(len(selected)),
         "cutoff": cutoff.isoformat(),
         "trained_at": datetime.now(timezone.utc).isoformat(),
-        "feature_names": list(NUMERIC_FEATURES) + list(DOMAIN_CATS) + ["bias"],
+        "feature_names": list(TRAIN_NUMERIC) + list(DOMAIN_CATS) + ["bias"],
+        "train_label": "human_blind_label",
         "success_definition": SUCCESS_DEFINITION,
     }
 
 
-def can_train(*, n_auto_labeled: int, agreement: Optional[float]) -> bool:
-    if n_auto_labeled < MIN_TRAIN_N:
-        return False
-    if agreement is None or agreement < blind_label.AGREEMENT_FLOOR:
-        return False
-    return True
+def can_train(*, n_human_labeled: int) -> bool:
+    return n_human_labeled >= MIN_TRAIN_N
 
 
 def _pick_learned(remaining: list[dict], model: Optional[dict]) -> tuple[dict, float, str]:
@@ -434,6 +438,8 @@ def select_run(
             blind_label._append_jsonl(blind_label._path("assignments.jsonl"), record)
         decisions.append(record)
         remaining = [row for row in remaining if row["id"] != chosen["id"]]
+    if write:
+        blind_label.enqueue_pool(normalize_pool(pool, posted_ids=posted_ids), run_id=run_id)
     return decisions
 
 
@@ -459,43 +465,52 @@ def collect_training_rows() -> list[dict]:
         for row in blind_label._view(blind_label.load_items(), "live")
         if row.get("id")
     }
-    outcomes = {str(row.get("chosen_id") or row.get("id")): row for row in load_outcomes(view="live")}
+    candidates = {
+        str(row.get("id")): row
+        for row in blind_label._view(blind_label.load_candidates(), "live")
+        if row.get("id")
+    }
+    decisions = {
+        str(row.get("chosen_id") or row.get("id")): row
+        for row in load_decisions(view="live")
+        if row.get("chosen_id") or row.get("id")
+    }
+    labels = {}
+    for row in blind_label._view(blind_label.load_labels(), "live"):
+        item_id = str(row.get("id") or "")
+        if item_id:
+            labels[item_id] = row
     rows = []
-    for decision in load_decisions(view="live"):
-        item_id = str(decision.get("chosen_id") or "")
-        if not item_id:
+    for item_id, label in labels.items():
+        if label.get("quality_success") is None:
             continue
-        outcome = outcomes.get(item_id, {})
-        item = items.get(item_id, {})
-        if blind_label.is_sim(decision) or blind_label.is_sim(outcome) or blind_label.is_sim(item):
+        item = items.get(item_id) or candidates.get(item_id) or {}
+        decision = decisions.get(item_id, {})
+        if blind_label.is_sim(label) or blind_label.is_sim(item) or blind_label.is_sim(decision):
             continue
-        auto_relevant = outcome.get("auto_relevant")
-        if auto_relevant is None:
-            auto_relevant = item.get("auto_relevant")
-        if auto_relevant is None:
-            continue
+        source = {**item, **decision}
         rows.append(
             {
                 "id": item_id,
-                "auto_relevant": auto_relevant,
-                "features": decision.get("features") or extract_features(item or decision),
+                "quality_success": bool(label.get("quality_success")),
+                "features": decision.get("features") or extract_features(source or {"id": item_id}),
                 "decided_at": decision.get("decided_at"),
                 "posted_at": item.get("posted_at"),
-                "labeled_at": outcome.get("assigned_at") or item.get("posted_at") or decision.get("decided_at"),
+                "labeled_at": label.get("labeled_at"),
             }
         )
     return rows
 
 
 def train(*, cutoff: datetime, min_n: int = MIN_TRAIN_N) -> dict:
-    report = blind_label.report()
     rows = collect_training_rows()
-    if not can_train(n_auto_labeled=len(rows), agreement=report.get("agreement")):
+    if not can_train(n_human_labeled=len(rows)):
         model = {
             "model_version": PRIOR_VERSION,
             "n": len(rows),
             "cutoff": cutoff.isoformat(),
-            "reason": "cold_start_or_agreement",
+            "reason": "cold_start",
+            "train_label": "human_blind_label",
             "success_definition": SUCCESS_DEFINITION,
         }
         save_model(model)
@@ -524,7 +539,7 @@ def main(argv=None) -> int:
     p_sel.add_argument("--json", default="")
     p_sel.add_argument("--pool-jsonl", default="")
     p_sel.add_argument("--slots", type=int, default=POSTS_PER_RUN)
-    p_tr = sub.add_parser("train", help="Fit logreg on auto labels before cutoff")
+    p_tr = sub.add_parser("train", help="Fit logreg on human blind labels before cutoff")
     p_tr.add_argument("--cutoff", required=True)
     p_tr.add_argument("--min-n", type=int, default=MIN_TRAIN_N)
     p_arm = sub.add_parser("assign", help="Show the slot coin flip without writing")

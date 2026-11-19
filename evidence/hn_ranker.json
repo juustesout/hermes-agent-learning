@@ -6,11 +6,13 @@
   "features": [
     "source_rank",
     "rag_score",
-    "hn_points",
-    "hn_comments",
     "age_hours",
     "title_len",
     "domain_cat"
+  ],
+  "logged_not_trained": [
+    "hn_points",
+    "hn_comments"
   ],
   "forbidden_features": [
     "posted_at",
@@ -31,8 +33,7 @@
     "id": "logreg-v1",
     "type": "l2_logistic_regression",
     "min_train_n": 200,
-    "train_label": "auto_relevant",
-    "train_requires_agreement": 0.9,
+    "train_label": "human_blind_label",
     "eval_label": "human_blind_label",
     "retrain_weekday_utc": 6
   },

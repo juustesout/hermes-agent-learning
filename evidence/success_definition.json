@@ -17,6 +17,10 @@
     {
       "date": "2026-11-17",
       "reason": "Primary lift claim stays intention-to-treat on all posted slots. n_contrast (L != B) and the contrast-subset effect are explanatory only. ITT difference is about contrast_rate times the contrast-subset effect. Salt unchanged."
+    },
+    {
+      "date": "2026-11-19",
+      "reason": "Label the candidate pool of each run, not only the two posted items. Ranker training uses human blind labels only. hn_points and hn_comments are logged, not trained on. Auto labels stay an agreement check, not a training target."
     }
   ],
   "workflows": {
@@ -42,7 +46,7 @@
       },
       "ranker": {
         "file": "hn_ranker.py",
-        "prior": "rag_score descending until 200 auto-labeled posts and rater/auto agreement >= 0.9",
+        "prior": "rag_score descending until 200 human-labeled pool items",
         "model": "L2 logistic regression on allowlisted features",
         "kill_switch": "AGENT_LEARNING_HN_RANKER_KILL",
         "fallback": "ranker exception logs arm B with fallback=true"
@@ -67,7 +71,9 @@
         "A posted item without a prior decision record is an audit alarm.",
         "Both arms choose from the same RAG-filtered, de-duplicated pool.",
         "Primary claim is ITT on all posted slots. n_contrast explains where any ITT difference comes from.",
-        "Sim n_contrast and sim contrast-subset effects are mechanics, not quality evidence."
+        "Sim n_contrast and sim contrast-subset effects are mechanics, not quality evidence.",
+        "Each run queues the full candidate pool for blind labels. Posted items keep the 20 percent sample only when they were not already queued from the pool.",
+        "Ranker training uses human_blind_label only. The automatic label is not a training target."
       ]
     },
     "podcast-buzzsprout": {

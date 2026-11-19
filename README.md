@@ -326,11 +326,13 @@ remaining relevant item in source order after hard dedupe. Learned = `hn_ranker.
 on the same remaining pool. HTTP 2xx is technical success only.
 
 Randomization is one coin per posting slot (`p_learned=0.5`). The 6h job must
-select, then post, then enqueue:
+select, then post, then enqueue. `select` also queues the whole candidate
+pool for blind labels, not only the two posted items:
 
 ```bash
 python3 hn_ranker.py select --run-id 2026-11-17T12 --json '[{"id":"...","title":"...","url":"...","rag_score":0.8,"source_rank":0}]'
-python3 blind_label.py enqueue --json '{"id":"hn-1","title":"...","url":"...","summary":"...","http_status":201,"auto_relevant":true}'
+python3 blind_label.py enqueue --json '{"id":"hn-1","title":"...","url":"...","summary":"...","http_status":201}'
+python3 blind_label.py enqueue-pool --run-id 2026-11-17T12 --json '[{"id":"...","title":"...","url":"..."}]'
 python3 blind_label.py record-run --attempted 2 --posted 2 --failed 0 --run-id 2026-11-17T12
 python3 blind_label.py next
 python3 blind_label.py label --id hn-1 --relevant yes --duplicate no --needs-correction no
@@ -343,10 +345,12 @@ slot (arm L or B, pool, chosen_id, features) and one outcome record per HTTP
 attempt. `audit` exits 2 if posts lag, a post has no decision, or the kill
 switch is on (`AGENT_LEARNING_HN_RANKER_KILL=1`).
 
-About 20 percent of posts are sampled (stable hash, ~11 labels/week at 8 posts/day).
-If rater/auto agreement drops below 90 percent, revise the automatic quality
-measure before using it as proof. The ranker stays on `prior-v1` (`rag_score`
-descending) until 200 auto-labeled posts and that agreement floor.
+Posted items keep a 20 percent sample. The candidate pool of each run is
+queued in full so the other 28 items can be labeled too. Raters still see
+only title, url, and summary. Ranker training uses those human labels,
+not the automatic score. `hn_points` and `hn_comments` are logged, not
+trained on. The ranker stays on `prior-v1` (`rag_score` descending) until
+200 human-labeled pool items.
 
 ### Local mechanical simulation
 
