@@ -361,6 +361,7 @@ python3 label_ui.py
 
 Open `http://127.0.0.1:8765`. The page shows title, url, and summary.
 Keys: 1/2 relevant, 3/4 duplicate, 5/6 correction, Enter save.
+If the queue is empty, fill it first. See `RUN_LABELS.md`.
 
 ### Local mechanical simulation
 
