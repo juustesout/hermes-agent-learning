@@ -363,6 +363,19 @@ Open `http://127.0.0.1:8765`. The page shows title, url, and summary.
 Keys: 1/2 relevant, 3/4 duplicate, 5/6 correction, Enter save.
 If the queue is empty, fill it first. See `RUN_LABELS.md`.
 
+External automations drop `inbox/pool-<run_id>.jsonl` (`pool.v1`). Import,
+select, then record the HTTP result. Baseline does not write the store:
+
+```bash
+python3 pool_v1.py pool import inbox/pool-2026-11-19T12.jsonl
+python3 pool_v1.py select --run-id 2026-11-19T12
+python3 pool_v1.py record-post --run-id 2026-11-19T12 --id hn-123 --http-status 201 --fallback false
+python3 pool_v1.py baseline --pool inbox/pool-2026-11-19T12.jsonl
+```
+
+Same commands exist as `hermes agent-learning pool import|select|baseline|record-post`.
+A second import or select for the same `run_id` is a no-op. Sim rows are refused.
+
 ### Local mechanical simulation
 
 `hn_sim.py` runs the 6h job against a loopback WordPress mock. Drafts only;

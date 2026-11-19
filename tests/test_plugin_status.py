@@ -57,6 +57,9 @@ def test_status_cli_command_registered():
             self.names.append(name)
             return self
 
+        def add_subparsers(self, dest=None):
+            return self
+
         def add_argument(self, *args, **kwargs):
             return self
 
@@ -75,6 +78,10 @@ def test_status_cli_command_registered():
     setup(parser)
     assert "status" in parser.subs.names
     assert "selftest" in parser.subs.names
+    assert "pool" in parser.subs.names
+    assert "select" in parser.subs.names
+    assert "baseline" in parser.subs.names
+    assert "record-post" in parser.subs.names
 
 
 def test_selftest_does_not_write_live_store(tmp_path, monkeypatch):

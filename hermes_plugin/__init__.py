@@ -309,7 +309,40 @@ def _handle_cli(args) -> None:
     if cmd == "health":
         print(json.dumps(opslog.health(), indent=2))
         return
-    print("Usage: hermes agent-learning <stats|count|tail|health|status|selftest>")
+    try:
+        import pool_v1
+    except Exception:
+        pool_v1 = None
+    if pool_v1 is not None:
+        if cmd == "pool" and getattr(args, "pool_cmd", None) == "import":
+            print(json.dumps(pool_v1.import_pool(args.path), indent=2, default=str))
+            return
+        if cmd == "select":
+            print(json.dumps(pool_v1.select_for_run(args.run_id), indent=2, default=str))
+            return
+        if cmd == "baseline":
+            print(json.dumps(pool_v1.baseline_from_pool(args.pool), indent=2, default=str))
+            return
+        if cmd == "record-post":
+            raw = str(getattr(args, "fallback", "false")).strip().lower()
+            fallback = raw in {"1", "true", "yes", "y", "on"}
+            print(
+                json.dumps(
+                    pool_v1.record_post(
+                        run_id=args.run_id,
+                        item_id=args.id,
+                        http_status=args.http_status,
+                        fallback=fallback,
+                    ),
+                    indent=2,
+                    default=str,
+                )
+            )
+            return
+    print(
+        "Usage: hermes agent-learning "
+        "<stats|count|tail|health|status|selftest|pool|select|baseline|record-post>"
+    )
 
 
 def _setup_argparse(subparser) -> None:
@@ -321,6 +354,19 @@ def _setup_argparse(subparser) -> None:
     subs.add_parser("selftest", help="Run hooks against a temporary store")
     p_tail = subs.add_parser("tail", help="Show recent operations")
     p_tail.add_argument("-n", type=int, default=10)
+    p_pool = subs.add_parser("pool", help="Import a pool.v1 candidate file")
+    pool_sub = p_pool.add_subparsers(dest="pool_cmd")
+    p_imp = pool_sub.add_parser("import", help="Validate and queue a pool.v1 file")
+    p_imp.add_argument("path")
+    p_sel = subs.add_parser("select", help="Choose two items for a run")
+    p_sel.add_argument("--run-id", required=True)
+    p_base = subs.add_parser("baseline", help="Baseline two items without writing the store")
+    p_base.add_argument("--pool", required=True)
+    p_post = subs.add_parser("record-post", help="Record HTTP result for a selected id")
+    p_post.add_argument("--run-id", required=True)
+    p_post.add_argument("--id", required=True)
+    p_post.add_argument("--http-status", type=int, required=True)
+    p_post.add_argument("--fallback", default="false")
     subparser.set_defaults(func=_handle_cli)
 
 
