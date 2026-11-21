@@ -15,6 +15,7 @@ import json
 import math
 import os
 import sys
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -25,6 +26,7 @@ import opslog
 WORKFLOW = "hn-aidevforum"
 SUCCESS_DEFINITION = "2026-11-17.3"
 SAMPLE_RATE = 0.2
+DAILY_BLIND_SAMPLE_LIMIT = 50
 AGREEMENT_FLOOR = 0.9
 ASSIGN_SALT = "hn-aidevforum-2026-11-17.2"
 P_LEARNED = 0.5
@@ -242,6 +244,19 @@ def should_sample(item_id: str, rate: float = SAMPLE_RATE) -> bool:
     return _unit(item_id, "sample") < rate
 
 
+def _daily_queue_slots(limit: int = DAILY_BLIND_SAMPLE_LIMIT) -> int:
+    today = datetime.now(timezone.utc).date()
+    queued_today = 0
+    for row in load_queue():
+        ts = _parse_ts(row.get("queued_at"))
+        if ts is not None:
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts.astimezone(timezone.utc).date() == today:
+                queued_today += 1
+    return max(0, limit - queued_today)
+
+
 def normalize_arm(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -356,6 +371,47 @@ def load_health() -> dict:
 
 def _ids(rows: Iterable[dict]) -> set[str]:
     return {str(row.get("id")) for row in rows if row.get("id")}
+
+
+_STRIP_QUERY = frozenset(
+    {
+        "token",
+        "access_token",
+        "api_key",
+        "key",
+        "secret",
+        "auth",
+        "session",
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "fbclid",
+        "gclid",
+    }
+)
+
+
+def _canonical_url(url: Any) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parts = urllib.parse.urlsplit(raw)
+    except Exception:
+        return raw
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        return raw
+    query = [
+        (k, v)
+        for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        if k.lower() not in _STRIP_QUERY
+    ]
+    path = (parts.path or "/").rstrip("/") or "/"
+    return urllib.parse.urlunsplit(
+        (parts.scheme.lower(), parts.netloc.lower(), path, urllib.parse.urlencode(query), "")
+    )
 
 
 def public_item(item: dict) -> dict:
@@ -476,7 +532,9 @@ def enqueue_pool(pool: Iterable[dict], *, run_id: str, sample: bool = True) -> d
     cards: list[dict] = []
     queue_rows: list[dict] = []
     now = datetime.now(timezone.utc).isoformat()
-    for raw in pool or []:
+    slots = _daily_queue_slots() if sample else 0
+    ranked_pool = sorted(pool or [], key=lambda raw: _unit(str(raw.get("id") or ""), "pool-order") if isinstance(raw, dict) else 1.0)
+    for raw in ranked_pool:
         if not isinstance(raw, dict):
             continue
         item_id = str(raw.get("id") or "").strip()
@@ -500,7 +558,7 @@ def enqueue_pool(pool: Iterable[dict], *, run_id: str, sample: bool = True) -> d
                 card[key] = raw[key]
         cards.append(card)
         added += 1
-        if sample and item_id not in queued:
+        if sample and slots > 0 and item_id not in queued:
             queued.add(item_id)
             queue_rows.append(
                 {
@@ -512,6 +570,7 @@ def enqueue_pool(pool: Iterable[dict], *, run_id: str, sample: bool = True) -> d
                 }
             )
             sampled += 1
+            slots -= 1
     if cards:
         _append_jsonl_many(_path("candidates.jsonl"), cards)
     if queue_rows:
@@ -525,16 +584,35 @@ def enqueue_pool(pool: Iterable[dict], *, run_id: str, sample: bool = True) -> d
 
 
 def unlabeled_queue() -> list[dict]:
-    labeled = _ids(load_labels())
+    label_rows = load_labels()
+    labeled = _ids(label_rows)
     cards = {row["id"]: row for row in load_candidates() if row.get("id")}
     cards.update({row["id"]: row for row in load_items() if row.get("id")})
+    labeled_urls = set()
+    for row in label_rows:
+        direct = _canonical_url(row.get("canonical_url") or row.get("url"))
+        if direct:
+            labeled_urls.add(direct)
+    for lid in labeled:
+        lcard = cards.get(lid)
+        if lcard:
+            cu = _canonical_url(lcard.get("url"))
+            if cu:
+                labeled_urls.add(cu)
+    seen_urls = set()
     pending = []
-    for row in load_queue():
+    queue_rows = sorted(load_queue(), key=lambda row: _unit(str(row.get("id") or ""), "display-order"))
+    for row in queue_rows:
         item_id = str(row.get("id") or "")
         if not item_id or item_id in labeled:
             continue
         item = cards.get(item_id)
         if item:
+            item_url = _canonical_url(item.get("url"))
+            if item_url and (item_url in labeled_urls or item_url in seen_urls):
+                continue
+            if item_url:
+                seen_urls.add(item_url)
             pending.append(item)
     return pending
 
@@ -592,6 +670,10 @@ def record_label(
     queued = _ids(load_queue())
     if item_id not in queued:
         raise ValueError(f"{item_id} is not in the blind sample")
+    cards = {str(row.get("id") or ""): row for row in load_candidates() if row.get("id")}
+    cards.update({str(row.get("id") or ""): row for row in load_items() if row.get("id")})
+    card = cards.get(item_id, {})
+    item_url = str(card.get("url") or "").strip()
     payload = {
         "id": item_id,
         "relevant": relevant,
@@ -603,6 +685,9 @@ def record_label(
         "labeled_at": datetime.now(timezone.utc).isoformat(),
         "success_definition": SUCCESS_DEFINITION,
         "workflow": WORKFLOW,
+        "title": str(card.get("title") or "").strip(),
+        "url": item_url,
+        "canonical_url": _canonical_url(item_url),
     }
     _append_jsonl(_path("labels.jsonl"), payload)
     return payload
@@ -638,13 +723,14 @@ def _by_id(rows: Iterable[dict]) -> dict[str, dict]:
 def report(view: str = "live") -> dict:
     items = _view(load_items(), view)
     queue = _view(load_queue(), view)
+    pending = unlabeled_queue()
     decisions = _view(load_decisions(), view)
     outcomes = _view(load_outcomes(), view)
     assignments = _by_id(decisions)
     assignments.update(_by_id(outcomes))
     latest = _latest_labels(view)
-    labeled_n = sum(1 for row in queue if row.get("id") in latest)
-    remaining = len(queue) - labeled_n
+    remaining = len(pending)
+    labeled_n = max(0, len(queue) - remaining)
     compared = 0
     agree = 0
     human_ok = 0

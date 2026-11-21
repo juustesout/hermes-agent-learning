@@ -262,11 +262,17 @@ def _canonical_url(value: Any) -> str:
         return str(value or "").strip().lower()
 
 
-def posted_keys() -> tuple[set[str], set[str], set[str]]:
+def posted_keys(
+    *,
+    include_queue: bool = False,
+    include_candidates: bool = False,
+    include_assignments: bool = False,
+) -> tuple[set[str], set[str], set[str]]:
     ids: set[str] = set()
     hn_ids: set[str] = set()
     urls: set[str] = set()
-    for row in blind_label.load_items():
+
+    def _add_row(row: dict) -> None:
         item_id = str(row.get("id") or "").strip()
         if item_id:
             ids.add(item_id)
@@ -275,6 +281,23 @@ def posted_keys() -> tuple[set[str], set[str], set[str]]:
             hn_ids.add(str(hn).strip())
         if row.get("url"):
             urls.add(_canonical_url(row.get("url")))
+
+    for row in blind_label.load_items():
+        _add_row(row)
+    if include_queue:
+        for row in blind_label.load_queue():
+            _add_row(row)
+    if include_candidates:
+        for row in blind_label.load_candidates():
+            _add_row(row)
+    if include_assignments:
+        for row in blind_label.load_assignments():
+            item_id = str(row.get("id") or "").strip()
+            chosen_id = str(row.get("chosen_id") or "").strip()
+            if item_id:
+                ids.add(item_id)
+            if chosen_id:
+                ids.add(chosen_id)
     return ids, hn_ids, urls
 
 
@@ -360,7 +383,11 @@ def import_pool(path: str | Path) -> dict:
             "queued": 0,
             "skipped_posted": 0,
         }
-    posted_ids, posted_hn, posted_urls = posted_keys()
+    posted_ids, posted_hn, posted_urls = posted_keys(
+        include_queue=True,
+        include_candidates=True,
+        include_assignments=True,
+    )
     remaining = []
     skipped_posted = 0
     for item in candidates:
